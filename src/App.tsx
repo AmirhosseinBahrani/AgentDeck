@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
+import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { TranscriptView } from "./features/sessions/TranscriptView";
 import {
   useEventPump,
@@ -39,7 +40,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-full flex-col bg-neutral-950 text-neutral-200">
+    <div className="relative flex h-full flex-col bg-neutral-950 text-neutral-200">
       <header className="flex h-9 shrink-0 items-center justify-between border-b border-neutral-800 px-3">
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold">AgentDeck</span>
@@ -55,6 +56,10 @@ export default function App() {
           </span>
         </div>
       </header>
+
+      {/* Outside the router and the session panel: an agent can block while the operator is
+          looking elsewhere, and a prompt buried in a hidden transcript would time out unseen. */}
+      <EscalationLayer />
 
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col border-r border-neutral-800">

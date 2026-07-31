@@ -145,3 +145,37 @@ pub async fn list_fixtures(state: State<'_, AppState>) -> Result<Vec<String>, St
     names.sort();
     Ok(names)
 }
+
+/// Applies an operator decision to a parked permission request.
+///
+/// Deliberately not optimistic on the frontend: a permission answer is a safety action, so the
+/// UI must reflect what the backend actually accepted rather than assuming success.
+#[tauri::command]
+pub async fn respond_permission(
+    state: State<'_, AppState>,
+    request_id: String,
+    allow: bool,
+    updated_input: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let resolution = if allow {
+        deck_core::permission::Resolution::Allowed {
+            updated_input: updated_input.unwrap_or(serde_json::Value::Null),
+        }
+    } else {
+        deck_core::permission::Resolution::Denied {
+            message: "The operator declined this action. Continue with an approach that stays \
+                      inside your worktree, or report a blocker."
+                .into(),
+        }
+    };
+
+    state
+        .broker
+        .resolve(&request_id, resolution)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn pending_permission_count(state: State<'_, AppState>) -> Result<usize, String> {
+    Ok(state.broker.pending_count())
+}

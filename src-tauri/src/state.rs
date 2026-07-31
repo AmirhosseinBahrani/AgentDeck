@@ -1,6 +1,7 @@
 use deck_core::bus::EventBus;
 use deck_core::domain::event::EventEnvelope;
 use deck_core::domain::ids::Seq;
+use deck_core::permission::{worker_defaults, EffectivePolicy, PermissionBroker};
 use deck_core::runtime::mock::{MockRuntime, Speed};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -25,6 +26,10 @@ const EMBEDDED_FIXTURES: &[(&str, &str)] = &[
         "permission-denied-session",
         include_str!("../../crates/deck-core/tests/fixtures/probe4.ndjson"),
     ),
+    (
+        "permission-ask-session",
+        include_str!("../../crates/deck-core/tests/fixtures/probe6-permission-ask.ndjson"),
+    ),
 ];
 
 pub struct AppState {
@@ -34,6 +39,9 @@ pub struct AppState {
     /// Sessions the UI is currently displaying. Deltas for anything else are dropped at the
     /// source rather than crossing the IPC bridge.
     pub watched: Arc<Mutex<Vec<deck_core::domain::ids::SessionId>>>,
+    /// Answers permission requests. One per app for now; it becomes one per agent once
+    /// worktrees exist in M3 and each agent has its own containment root.
+    pub broker: Arc<PermissionBroker>,
 }
 
 impl AppState {
@@ -66,11 +74,21 @@ impl AppState {
             mock.register(*name, *body);
         }
 
+        // Until M3 gives each agent a worktree, containment is rooted at the current
+        // directory. That makes the demo honest: the replayed out-of-tree write really is
+        // outside this root, so it really does escalate.
+        let root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let policy =
+            EffectivePolicy::resolve(root.canonicalize().unwrap_or(root), &[worker_defaults()]);
+        let broker = Arc::new(PermissionBroker::new(policy));
+        mock.set_broker(broker.clone());
+
         Self {
             bus,
             history,
             mock,
             watched: Arc::new(Mutex::new(Vec::new())),
+            broker,
         }
     }
 

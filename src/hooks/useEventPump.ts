@@ -1,6 +1,7 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import { transcriptStore } from "../lib/transcriptStore";
+import { ingestEscalations } from "./useEscalations";
 import type { EventBatch, EventEnvelope, TranscriptRow } from "../lib/types";
 
 /**
@@ -78,6 +79,9 @@ export function useEventPump(): void {
       }
 
       if (batch.events.length > 0) {
+        // Escalations are handled synchronously: they arrive unbatched precisely because
+        // latency matters, so deferring them to the next frame would waste that.
+        ingestEscalations(batch.events);
         pending.current.push(...batch.events);
         schedule();
       }

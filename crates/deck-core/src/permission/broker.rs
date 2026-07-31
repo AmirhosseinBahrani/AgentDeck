@@ -47,8 +47,11 @@ pub struct PendingRequest {
 pub enum BrokerError {
     #[error("no pending permission request with id {0}")]
     Unknown(String),
-    #[error("permission request {0} was already resolved")]
-    AlreadyResolved(String),
+    /// The request existed but nothing was waiting for the answer — its waiter was dropped.
+    /// Distinguished from `Unknown` because it means the agent is no longer blocked, so the
+    /// operator's click had no effect rather than being invalid.
+    #[error("permission request {0} no longer has a waiter; the agent is not blocked on it")]
+    Abandoned(String),
 }
 
 /// Outcome of handing a tool call to the broker.
@@ -152,7 +155,7 @@ impl PermissionBroker {
             .ok_or_else(|| BrokerError::Unknown(request_id.to_string()))?;
 
         tx.send(resolution)
-            .map_err(|_| BrokerError::AlreadyResolved(request_id.to_string()))
+            .map_err(|_| BrokerError::Abandoned(request_id.to_string()))
     }
 
     /// Auto-denial used when the deadline passes.

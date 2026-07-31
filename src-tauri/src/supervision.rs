@@ -7,6 +7,8 @@
 use dashmap::DashMap;
 use deck_core::bus::{Attribution, EventBus};
 use deck_core::domain::ids::{SessionId, TaskId};
+use deck_core::report_server::{ReportServer, ReportSink};
+use deck_core::reporting::{mcp_config, socket_path, ReportAck, ReportEnvelope, WorkerReport};
 use deck_core::runtime::claude_code::actor::{spawn_session, SessionCmd, SessionHandle};
 use deck_core::workspace::{PrepareRequest, WorkspaceRegistry};
 use deck_supervisor::workspaces::{DispatchError, DispatchRequest, DispatchedAgent, Workspaces};
@@ -18,17 +20,34 @@ pub struct LiveWorkspaces {
     bus: Arc<EventBus>,
     /// Live agents, so a run can be stopped and the UI can attach to a transcript.
     sessions: DashMap<TaskId, Arc<SessionHandle>>,
+    /// One reporting socket per session, held so it lives as long as the agent. Dropping it
+    /// removes the socket and the agent's tools stop working mid-task.
+    report_servers: DashMap<TaskId, ReportServer>,
+    /// Where worker reports go. Set by the app before a run starts.
+    sink: Arc<dyn ReportSink>,
+    /// The MCP server binary handed to each agent.
+    mcp_binary: PathBuf,
+    runtime_dir: PathBuf,
     /// Base branch new worktrees start from.
     base_ref: String,
     model: Option<String>,
 }
 
 impl LiveWorkspaces {
-    pub fn new(registry: Arc<WorkspaceRegistry>, bus: Arc<EventBus>, base_ref: String) -> Self {
+    pub fn new(
+        registry: Arc<WorkspaceRegistry>,
+        bus: Arc<EventBus>,
+        base_ref: String,
+        sink: Arc<dyn ReportSink>,
+    ) -> Self {
         Self {
             registry,
             bus,
             sessions: DashMap::new(),
+            report_servers: DashMap::new(),
+            sink,
+            mcp_binary: mcp_binary_path(),
+            runtime_dir: PathBuf::from("/tmp"),
             base_ref,
             model: None,
         }
@@ -45,6 +64,9 @@ impl LiveWorkspaces {
                 stopped += 1;
             }
         }
+        // Dropping the servers removes their sockets. Done after killing, so a dying agent's last
+        // report still has somewhere to land.
+        self.report_servers.clear();
         stopped
     }
 }
@@ -73,7 +95,22 @@ impl Workspaces for LiveWorkspaces {
             })?;
 
         let session_id = SessionId::new();
+
+        // The reporting socket must exist before the agent starts: the CLI spawns its MCP servers
+        // during startup, and a missing socket would leave the agent without the only tool that
+        // can complete its task.
+        let socket = socket_path(&self.runtime_dir, &session_id.to_string());
+        let server = ReportServer::bind(socket.clone(), self.sink.clone())
+            .await
+            .map_err(|e| DispatchError::SpawnFailed {
+                task_id: request.task_id,
+                detail: format!("could not open the reporting socket: {e}"),
+            })?;
+        self.report_servers.insert(request.task_id, server);
+
         let mut opts = workspace.spawn_options(session_id);
+        opts.config.mcp_config =
+            Some(mcp_config(&self.mcp_binary, &socket, &request.task_id.to_string()).to_string());
         opts.attribution = Attribution {
             session_id: Some(session_id),
             agent_id: Some(request.agent_id),
@@ -192,5 +229,82 @@ impl deck_supervisor::planner::Planner for CliPlanner {
             structured,
             cost_usd: parsed.get("total_cost_usd").and_then(|c| c.as_f64()),
         })
+    }
+}
+
+/// Locates the MCP server binary.
+///
+/// Beside the running executable, which is where it sits both in a cargo target directory and in a
+/// packaged bundle. Falling back to a bare name would silently resolve to whatever is on PATH.
+fn mcp_binary_path() -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("deck-mcp")))
+        .unwrap_or_else(|| PathBuf::from("deck-mcp"))
+}
+
+/// Routes worker reports into the supervisor.
+///
+/// The decision to accept a completion is not made here — this only records the claim and wakes
+/// the loop, which then runs the verification gate. A sink that could accept a completion outright
+/// would bypass the gate entirely, which is the one thing the whole design exists to prevent.
+pub struct SupervisorSink {
+    claims: SharedClaims,
+    triggers: tokio::sync::mpsc::Sender<deck_supervisor::loop_engine::Trigger>,
+}
+
+impl SupervisorSink {
+    pub fn new(
+        claims: SharedClaims,
+        triggers: tokio::sync::mpsc::Sender<deck_supervisor::loop_engine::Trigger>,
+    ) -> Self {
+        Self { claims, triggers }
+    }
+}
+
+/// Reports waiting for the driver to pick up.
+///
+/// `parking_lot` rather than tokio: the driver drains this from a synchronous stage, and a lock it
+/// could not acquire there would silently skip a completion claim.
+pub type SharedClaims = Arc<parking_lot::Mutex<Vec<(TaskId, WorkerReport)>>>;
+
+/// Hands queued reports to the driver at its IngestReports stage.
+pub struct ClaimQueue(pub SharedClaims);
+
+impl deck_supervisor::workspaces::ReportQueue for ClaimQueue {
+    fn drain(&self) -> Vec<(TaskId, WorkerReport)> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
+#[async_trait::async_trait]
+impl ReportSink for SupervisorSink {
+    async fn accept(&self, envelope: ReportEnvelope) -> ReportAck {
+        let Ok(task_id) = envelope.task_id.parse::<uuid::Uuid>().map(TaskId::from) else {
+            return ReportAck::rejected(format!(
+                "report carried an unrecognised task id ({}); it was not recorded",
+                envelope.task_id
+            ));
+        };
+
+        let message = match &envelope.report {
+            // Deliberately not "done". The claim is queued for verification, and saying otherwise
+            // would let the agent believe it had finished before its criteria were checked.
+            WorkerReport::ClaimTaskDone { .. } => {
+                "Completion claimed. Your acceptance criteria will now be verified; if any fail                  the task comes back to you."
+            }
+            WorkerReport::ReportProgress { .. } => "Progress recorded.",
+            WorkerReport::RaiseBlocker { .. } => {
+                "Blocker recorded. The supervisor will decide how to proceed."
+            }
+        };
+
+        self.claims.lock().push((task_id, envelope.report));
+        // Wake the loop so the claim is acted on now rather than at the next tick.
+        let _ = self
+            .triggers
+            .try_send(deck_supervisor::loop_engine::Trigger::ReportReceived);
+
+        ReportAck::accepted(message)
     }
 }

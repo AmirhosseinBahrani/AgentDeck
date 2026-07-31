@@ -9,7 +9,7 @@ use crate::decision::*;
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
 use crate::loop_engine::*;
 use crate::planner::{Decisions, Planner};
-use crate::workspaces::{render_brief, DispatchRequest, Workspaces};
+use crate::workspaces::{render_brief, DispatchRequest, NoReports, ReportQueue, Workspaces};
 use deck_core::domain::ids::{AgentId, TaskId};
 use deck_core::domain::task::{apply, TaskEvent, TaskState, TaskStatus};
 use std::collections::HashMap;
@@ -115,6 +115,7 @@ pub struct Driver<'a> {
     pub config: &'a RunConfig,
     pub planner: &'a dyn Planner,
     pub workspaces: &'a dyn Workspaces,
+    pub reports: &'a dyn ReportQueue,
 }
 
 impl<'a> Driver<'a> {
@@ -127,7 +128,15 @@ impl<'a> Driver<'a> {
             config,
             planner,
             workspaces,
+            reports: &NoReports,
         }
+    }
+
+    /// Supplies live worker reports. Without one the driver runs against no agent input, which is
+    /// what the scripted tests want.
+    pub fn with_reports(mut self, reports: &'a dyn ReportQueue) -> Self {
+        self.reports = reports;
+        self
     }
 
     /// Runs one iteration if the sweep says it is warranted.
@@ -163,6 +172,7 @@ impl<'a> Driver<'a> {
             }
 
             match stage {
+                Stage::IngestReports => self.stage_ingest_reports(run),
                 Stage::Plan if run.graph.is_empty() => self.stage_plan(run).await,
                 Stage::Assign => self.stage_assign(run).await,
                 Stage::Dispatch => dispatched = self.stage_dispatch(run).await,
@@ -178,6 +188,75 @@ impl<'a> Driver<'a> {
         }
 
         IterationOutcome::Advanced { dispatched }
+    }
+
+    // -----------------------------------------------------------------------
+    // Ingest reports — pure: applies what agents said, decides nothing
+    // -----------------------------------------------------------------------
+
+    fn stage_ingest_reports(&self, run: &mut Run) {
+        use deck_core::reporting::WorkerReport;
+
+        for (task_id, report) in self.reports.drain() {
+            match report {
+                // Queues the task for verification. Note this does not complete it: the gate runs
+                // next, and a claim whose criteria fail comes straight back as a rejection.
+                WorkerReport::ClaimTaskDone { summary } => {
+                    if claim_done(run, task_id) {
+                        run.log.record_code_decision(
+                            run.state.iteration,
+                            Stage::IngestReports,
+                            "claim_task_done",
+                            "worker_claim",
+                            &summary,
+                        );
+                    } else {
+                        // A claim from a task that is not running is a protocol violation, not a
+                        // completion — most likely a duplicate, or an agent outliving its task.
+                        run.log.record_code_decision(
+                            run.state.iteration,
+                            Stage::IngestReports,
+                            "claim_rejected",
+                            "illegal_state",
+                            &format!("task {task_id} claimed completion from an illegal state"),
+                        );
+                    }
+                }
+
+                WorkerReport::RaiseBlocker { reason } => {
+                    if let Some(current) = run.graph.get(task_id).cloned() {
+                        if let Ok(next) = apply(
+                            &current,
+                            TaskEvent::Blocked {
+                                reason: reason.clone(),
+                            },
+                        ) {
+                            run.graph.set_state(next);
+                        }
+                    }
+                    run.state.open_escalations += 1;
+                    run.log.record_code_decision(
+                        run.state.iteration,
+                        Stage::IngestReports,
+                        "raise_blocker",
+                        "worker_blocked",
+                        &reason,
+                    );
+                }
+
+                // Advisory only. The supervisor also derives telemetry the worker cannot
+                // influence, so progress is recorded rather than acted upon.
+                WorkerReport::ReportProgress { summary, .. } => {
+                    run.log.record_code_decision(
+                        run.state.iteration,
+                        Stage::IngestReports,
+                        "report_progress",
+                        "worker_progress",
+                        &summary,
+                    );
+                }
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

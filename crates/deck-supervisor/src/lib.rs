@@ -5,39 +5,11 @@
 //! ladder before it is allowed to mutate state. State transitions, retry counting,
 //! dependency readiness, concurrency limits and completion detection are pure code.
 //!
-//! Implemented in M6; this crate exists from M0 so the compile boundary is real.
+//! The loop lives in [`loop_engine`], the bounded decision points and their validation ladder in
+//! [`decision`], the dependency graph in [`graph`], and contracts plus the deterministic
+//! verification gate in [`contract`].
 
 pub mod contract;
+pub mod decision;
 pub mod graph;
-
-/// The stage pipeline of one supervisor iteration. `Sweep` runs every tick and is free;
-/// only a dirty run advances through the stages, so an idle run costs nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stage {
-    Observe,
-    IngestReports,
-    Reap,
-    Plan,
-    Assign,
-    Dispatch,
-    Verify,
-    Judge,
-    Adjudicate,
-    Failures,
-    Escalate,
-    CompletionCheck,
-    Commit,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunPhase {
-    Planning,
-    Dispatching,
-    Monitoring,
-    Reviewing,
-    Replanning,
-    BlockedOnHuman,
-    Completed,
-    Failed,
-    Cancelled,
-}
+pub mod loop_engine;

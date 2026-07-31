@@ -20,19 +20,6 @@ use tokio::sync::{broadcast, mpsc};
 const DURABLE_CAPACITY: usize = 16_384;
 const OBSERVER_CAPACITY: usize = 4_096;
 
-/// What a lagging observer receives so it knows to refetch rather than silently skip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Resync {
-    pub missed: u64,
-}
-
-#[derive(Debug, Clone)]
-pub enum Observed {
-    Event(EventEnvelope),
-    /// The observer fell behind and lost events. Backfill from `events` by `seq`.
-    Resync(Resync),
-}
-
 /// Attribution attached to every event a session publishes.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Attribution {
@@ -105,6 +92,9 @@ impl EventBus {
         seq
     }
 
+    /// Observers must handle `RecvError::Lagged(n)` by backfilling from the `events` table
+    /// starting at their last seen `seq`. The channel intentionally does not hide lag, since
+    /// a silent gap is indistinguishable from "nothing happened".
     pub fn subscribe(&self) -> broadcast::Receiver<EventEnvelope> {
         self.observer_tx.subscribe()
     }

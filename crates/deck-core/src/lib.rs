@@ -6,6 +6,7 @@ pub mod permission;
 pub mod process;
 pub mod runtime;
 pub mod store;
+pub mod workspace;
 
 pub use domain::event::{AgentEvent, EventEnvelope};
 pub use domain::ids::{AgentId, RunId, SessionId, TaskId};

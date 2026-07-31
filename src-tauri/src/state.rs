@@ -3,6 +3,7 @@ use deck_core::domain::event::EventEnvelope;
 use deck_core::domain::ids::Seq;
 use deck_core::permission::{worker_defaults, EffectivePolicy, PermissionBroker};
 use deck_core::runtime::mock::{MockRuntime, Speed};
+use deck_core::workspace::WorkspaceRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -39,9 +40,12 @@ pub struct AppState {
     /// Sessions the UI is currently displaying. Deltas for anything else are dropped at the
     /// source rather than crossing the IPC bridge.
     pub watched: Arc<Mutex<Vec<deck_core::domain::ids::SessionId>>>,
-    /// Answers permission requests. One per app for now; it becomes one per agent once
-    /// worktrees exist in M3 and each agent has its own containment root.
-    pub broker: Arc<PermissionBroker>,
+    /// Per-agent workspaces: each real agent gets its own worktree and its own broker, so a
+    /// boundary is one agent's directory rather than the union of everyone's.
+    pub workspaces: Arc<WorkspaceRegistry>,
+    /// Serves the fixture-replay demo only, which has no worktree of its own. Real agents never
+    /// use it. It disappears once agents are launched from the UI in M4.
+    pub demo_broker: Arc<PermissionBroker>,
 }
 
 impl AppState {
@@ -80,15 +84,22 @@ impl AppState {
         let root = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let policy =
             EffectivePolicy::resolve(root.canonicalize().unwrap_or(root), &[worker_defaults()]);
-        let broker = Arc::new(PermissionBroker::new(policy));
-        mock.set_broker(broker.clone());
+        let demo_broker = Arc::new(PermissionBroker::new(policy));
+        mock.set_broker(demo_broker.clone());
+
+        // Rooted at the process's working directory: real agent worktrees are created under
+        // whichever project the operator opens, which arrives with the project model in M4.
+        let workspaces = Arc::new(WorkspaceRegistry::new(
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        ));
 
         Self {
             bus,
             history,
             mock,
             watched: Arc::new(Mutex::new(Vec::new())),
-            broker,
+            workspaces,
+            demo_broker,
         }
     }
 

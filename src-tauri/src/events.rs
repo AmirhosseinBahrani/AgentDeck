@@ -169,13 +169,22 @@ pub async fn respond_permission(
         }
     };
 
-    state
-        .broker
-        .resolve(&request_id, resolution)
-        .map_err(|e| e.to_string())
+    // Try the real per-agent brokers first; fall back to the demo broker used by fixture
+    // replay. Looking the request up rather than having the UI track which agent owns it keeps
+    // safety-critical bookkeeping out of the frontend.
+    match state
+        .workspaces
+        .resolve_permission(&request_id, resolution.clone())
+    {
+        Ok(()) => Ok(()),
+        Err(_) => state
+            .demo_broker
+            .resolve(&request_id, resolution)
+            .map_err(|e| e.to_string()),
+    }
 }
 
 #[tauri::command]
 pub async fn pending_permission_count(state: State<'_, AppState>) -> Result<usize, String> {
-    Ok(state.broker.pending_count())
+    Ok(state.workspaces.pending_permissions() + state.demo_broker.pending_count())
 }

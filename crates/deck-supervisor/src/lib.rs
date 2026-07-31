@@ -9,6 +9,7 @@
 //! [`decision`], the dependency graph in [`graph`], and contracts plus the deterministic
 //! verification gate in [`contract`].
 
+pub mod autonomy;
 pub mod contract;
 pub mod decision;
 pub mod driver;

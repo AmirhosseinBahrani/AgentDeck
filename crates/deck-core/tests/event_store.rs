@@ -241,6 +241,36 @@ async fn the_kind_column_is_populated_so_the_ui_can_filter_without_parsing_json(
 }
 
 #[tokio::test]
+async fn a_restart_continues_numbering_instead_of_colliding_with_the_old_log() {
+    // The bug this exists for was invisible in tests and obvious the moment the app was run
+    // twice: a bus that starts at 1 collides with every row the last launch wrote, the writer
+    // logs and continues rather than crashing, and the durable log stops recording entirely.
+    let s = store().await;
+    write_all(&s, (1..=5).map(|n| envelope(n, None, diag(n))).collect()).await;
+
+    // A fresh launch against the same database.
+    let (bus, durable) = EventBus::new();
+    bus.resume_from(events::max_seq(&s).await.unwrap());
+    let writer = tokio::spawn(events::run_writer(s.clone(), durable));
+
+    for n in 0..3 {
+        bus.publish(Attribution::default(), diag(n)).await;
+    }
+    drop(bus);
+    tokio::time::timeout(Duration::from_secs(5), writer)
+        .await
+        .expect("writer should finish")
+        .unwrap();
+
+    assert_eq!(
+        events::count(&s).await.unwrap(),
+        8,
+        "the new events must be persisted, not rejected as duplicates"
+    );
+    assert_eq!(events::max_seq(&s).await.unwrap(), Seq(8));
+}
+
+#[tokio::test]
 async fn events_published_through_the_bus_reach_the_store() {
     // The end-to-end path: nothing between publish and disk drops anything.
     let s = store().await;

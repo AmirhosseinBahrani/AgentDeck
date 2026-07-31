@@ -78,6 +78,8 @@ export interface TaskSummary {
   review_rounds: number;
   objective_gate: boolean;
   blocked_reason: string | null;
+  /** Assigned and ready, but held because this mode requires a human to start it. */
+  awaiting_approval: boolean;
 }
 
 export interface DecisionSummary {
@@ -97,9 +99,13 @@ export interface RunSnapshot {
   iteration: number;
   spent_usd: number;
   open_escalations: number;
+  autonomy: Autonomy;
   tasks: TaskSummary[];
   decisions: DecisionSummary[];
 }
+
+/** How much the supervisor may do without being asked. Enforced in Rust at dispatch. */
+export type Autonomy = "manual" | "assisted" | "autonomous";
 
 /** What starting up had to clean up after a previous launch. */
 export interface RecoveryReport {

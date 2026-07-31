@@ -1,0 +1,67 @@
+//! How much the supervisor is allowed to do without being asked.
+//!
+//! This is not a UI preference with a backend that ignores it. Autonomy decides whether a real
+//! process gets spawned into a real worktree with edit permissions, so it has to be enforced
+//! where that decision is made — in the dispatch stage — and nowhere else can be allowed to
+//! shortcut it. A mode that only greyed out a button would be a safety claim the code does not
+//! make good on.
+//!
+//! The three modes differ along two axes and no others, which is what keeps them explicable:
+//! whether a dispatch needs a human's approval, and whether a failure is retried or handed back.
+
+use deck_core::domain::ids::TaskId;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Autonomy {
+    /// Plans and assigns, but starts nothing and retries nothing. Every dispatch waits for a
+    /// human, and a failure comes straight back rather than being attempted again.
+    Manual,
+    /// Plans, assigns and retries on its own, but a human approves each agent before it starts.
+    #[default]
+    Assisted,
+    /// Runs unattended. The operator is told what happened rather than asked first.
+    Autonomous,
+}
+
+impl Autonomy {
+    /// Whether starting an agent requires a human to say so first.
+    pub fn dispatch_needs_approval(self) -> bool {
+        !matches!(self, Autonomy::Autonomous)
+    }
+
+    /// Whether a failed task may be attempted again without asking.
+    ///
+    /// Manual says no: the point of the mode is that nothing happens twice without a human
+    /// seeing it happen once, and a silent retry is exactly that.
+    pub fn may_retry(self) -> bool {
+        !matches!(self, Autonomy::Manual)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Autonomy::Manual => "manual",
+            Autonomy::Assisted => "assisted",
+            Autonomy::Autonomous => "autonomous",
+        }
+    }
+}
+
+/// Dispatch approvals a human has granted, waiting to be applied.
+///
+/// Drained by the driver rather than pushed into the run, for the same reason worker reports
+/// are: an approval arrives whenever the operator clicks, and mutating the graph mid-stage would
+/// change it underneath code already reading it.
+pub trait ApprovalQueue: Send + Sync {
+    fn drain(&self) -> Vec<TaskId>;
+}
+
+/// Grants nothing. Used by tests and by autonomous runs, which never consult it.
+pub struct NoApprovals;
+
+impl ApprovalQueue for NoApprovals {
+    fn drain(&self) -> Vec<TaskId> {
+        Vec::new()
+    }
+}

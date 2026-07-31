@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
-import type { RunSnapshot, TaskSummary } from "../../lib/types";
+import type { Autonomy, RunSnapshot, TaskSummary } from "../../lib/types";
+import { AutonomyPicker, AutonomyStripe } from "./AutonomyPicker";
 
 /**
  * The dashboard the product is built around.
@@ -14,6 +15,10 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Assisted until the operator says otherwise. Once a run starts, the mode it was started with
+  // is authoritative — the picker reflects the run rather than a local preference that no longer
+  // matches what the supervisor is actually enforcing.
+  const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
 
   const refresh = useCallback(async () => {
     try {
@@ -35,7 +40,7 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await invoke("start_supervisor_run", { objective, maxCostUsd: 5.0 });
+      await invoke("start_supervisor_run", { objective, maxCostUsd: 5.0, autonomy });
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -57,18 +62,45 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
     }
   }
 
-  const running = snapshot?.active && snapshot.phase !== "";
+  const running = !!(snapshot?.active && snapshot.phase !== "");
+  const effectiveMode = running ? (snapshot?.autonomy ?? autonomy) : autonomy;
+  const held = snapshot?.tasks.filter((t) => t.awaiting_approval) ?? [];
+
+  async function forceKill(taskId: string) {
+    try {
+      const killed = await invoke<boolean>("force_kill_agent", { taskId });
+      setError(killed ? null : "That agent was already gone.");
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  async function approve(taskId: string) {
+    try {
+      await invoke("approve_dispatch", { taskId });
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {/* Ambient, because "can agents act without asking me" is a question the operator needs
+          answered while looking at something else. */}
+      <AutonomyStripe mode={effectiveMode} active={running} />
+
       <ObjectiveHeader
         objective={objective}
         onObjectiveChange={setObjective}
         snapshot={snapshot}
-        running={!!running}
+        running={running}
         busy={busy}
         onStart={start}
         onCancel={cancel}
+        autonomy={effectiveMode}
+        onAutonomyChange={setAutonomy}
       />
 
       {error && (
@@ -84,14 +116,18 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
           ) : (
             <ul className="space-y-1">
               {snapshot.tasks.map((task) => (
-                <TaskRow key={task.id} task={task} />
+                <TaskRow key={task.id} task={task} onForceKill={forceKill} />
               ))}
             </ul>
           )}
         </Panel>
 
-        <Panel title="Blockers">
-          <Blockers snapshot={snapshot} />
+        <Panel title={held.length > 0 ? `Waiting for you (${held.length})` : "Blockers"}>
+          {held.length > 0 ? (
+            <Approvals tasks={held} onApprove={approve} />
+          ) : (
+            <Blockers snapshot={snapshot} />
+          )}
         </Panel>
 
         <Panel title="Decisions">
@@ -146,6 +182,8 @@ function ObjectiveHeader({
   busy,
   onStart,
   onCancel,
+  autonomy,
+  onAutonomyChange,
 }: {
   objective: string;
   onObjectiveChange: (value: string) => void;
@@ -154,6 +192,8 @@ function ObjectiveHeader({
   busy: boolean;
   onStart: () => void;
   onCancel: () => void;
+  autonomy: Autonomy;
+  onAutonomyChange: (mode: Autonomy) => void;
 }) {
   return (
     <header className="shrink-0 border-b border-neutral-800 px-4 py-3">
@@ -174,6 +214,10 @@ function ObjectiveHeader({
 
       <div className="flex items-center gap-3">
         <PhasePill phase={snapshot?.phase} />
+
+        {/* Locked while a run is live: the supervisor enforces the mode it was started with, so
+            an editable control here would claim a change that never reached it. */}
+        <AutonomyPicker value={autonomy} onChange={onAutonomyChange} disabled={running} />
 
         {running ? (
           <button
@@ -215,12 +259,51 @@ function PhasePill({ phase }: { phase?: string }) {
   );
 }
 
-function TaskRow({ task }: { task: TaskSummary }) {
+function TaskRow({
+  task,
+  onForceKill,
+}: {
+  task: TaskSummary;
+  onForceKill: (taskId: string) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+
   return (
     <li className="rounded border border-neutral-800 px-2 py-1.5">
       <div className="flex items-center gap-2">
         <StatusDot status={task.status} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200">{task.title}</span>
+        {/* Only on a running task, and behind a confirm. Killing is immediate and unconditional
+            once clicked, so the confirm is the only thing between a stray click and a stopped
+            agent — the work survives, but the turn in progress does not. */}
+        {task.status === "running" &&
+          (confirming ? (
+            <span className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  setConfirming(false);
+                  onForceKill(task.id);
+                }}
+                className="rounded bg-red-900/70 px-1.5 py-0.5 text-[10px] text-red-100 hover:bg-red-800"
+              >
+                Kill now
+              </button>
+              <button
+                onClick={() => setConfirming(false)}
+                className="text-[10px] text-neutral-500 hover:text-neutral-300"
+              >
+                Cancel
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setConfirming(true)}
+              title="Stops this agent immediately. Its worktree and changes are kept, and the task is cancelled rather than failed."
+              className="text-[10px] text-neutral-600 hover:text-red-400"
+            >
+              Stop
+            </button>
+          ))}
         {task.objective_gate && (
           <span
             className="text-[10px] text-neutral-500"
@@ -261,6 +344,44 @@ function StatusDot({ status }: { status: string }) {
       className={`h-1.5 w-1.5 shrink-0 rounded-full ${style[status] ?? "bg-neutral-600"}`}
       title={status}
     />
+  );
+}
+
+/**
+ * Agents the supervisor is ready to start but is not allowed to.
+ *
+ * Given its own panel rather than a row action, because in assisted and manual modes this is
+ * the run's critical path — everything else is waiting on it, and a run that looks idle when it
+ * is actually waiting for a click is the worst version of this feature.
+ */
+function Approvals({
+  tasks,
+  onApprove,
+}: {
+  tasks: TaskSummary[];
+  onApprove: (taskId: string) => void;
+}) {
+  return (
+    <ul className="space-y-1">
+      {tasks.map((task) => (
+        <li
+          key={task.id}
+          className="rounded border border-sky-900/60 bg-sky-950/20 px-2 py-1.5 text-[11px]"
+        >
+          <div className="text-neutral-200">{task.title}</div>
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-neutral-500">
+            <span>{task.role || "unassigned"}</span>
+            {task.attempts > 0 && <span>· attempt {task.attempts + 1}</span>}
+            <button
+              onClick={() => onApprove(task.id)}
+              className="ml-auto rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-neutral-900 hover:bg-white"
+            >
+              Start agent
+            </button>
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

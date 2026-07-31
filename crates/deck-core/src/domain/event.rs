@@ -4,7 +4,7 @@ use serde_json::Value;
 
 /// AgentDeck's own event model. Deliberately independent of the CLI's output format so
 /// the rest of the app is insulated from upstream changes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AgentEvent {
     /// First `system/init` of a process means startup succeeded. Note the CLI re-emits
@@ -85,7 +85,7 @@ pub enum ExitReason {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     pub seq: Seq,
     pub at_ms: i64,

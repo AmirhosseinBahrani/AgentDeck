@@ -1,9 +1,17 @@
 name: CI
 
+# macOS runners bill at 10x the minute rate, so PRs run on Linux only and the macOS jobs run on
+# push to main. Linux and macOS share this project's entire Unix code path — the ProcessGroup
+# trait has one shared unix impl — so PR feedback loses almost nothing, while macOS-specific
+# breakage is still caught before it accumulates.
+#
+# Running the full matrix on every PR consumed the account's Actions allowance within a day.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -15,15 +23,8 @@ env:
 
 jobs:
   core:
-    name: core (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # macOS is the shipping target for v0.1. Linux runs too because it shares the
-        # entire Unix process path, so it catches portability breaks for free.
-        # Windows lands with the Job Object ProcessGroup impl in v0.2.
-        os: [macos-latest, ubuntu-latest]
+    name: core (linux)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -33,8 +34,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # deck-core and deck-supervisor deliberately do not depend on Tauri, so the tests
-      # that matter run without any system webview libraries installed.
+      # deck-core and deck-supervisor deliberately do not depend on Tauri, so the tests that
+      # matter run without any system webview libraries installed.
       - name: Format
         run: cargo fmt --all -- --check
 
@@ -63,8 +64,11 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
 
-  app:
-    name: tauri app (macos)
+  # Only on main, and manually when a change warrants it. This is the job that verifies the
+  # actual shipping target, so it must not be removed outright — just run less often.
+  macos:
+    name: core + app (macos)
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -81,5 +85,10 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+
+      - name: Test core on the shipping platform
+        run: cargo test -p deck-core -p deck-supervisor
+
       # Compile-only: verifies the IPC surface and Tauri wiring without bundling or signing.
-      - run: cargo build -p agentdeck
+      - name: Build the app
+        run: cargo build -p agentdeck

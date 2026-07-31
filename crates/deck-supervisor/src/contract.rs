@@ -75,7 +75,11 @@ pub enum Constraint {
     },
 }
 
+/// Every field defaults, so a planner that omits parts of the contract still produces a parseable
+/// response. An unparseable one would be indistinguishable from a model failure and would skip the
+/// repair round-trip that exists precisely to correct omissions.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TaskContract {
     pub version: u32,
     pub acceptance_criteria: Vec<Criterion>,

@@ -49,17 +49,28 @@ pub enum LoopExit {
 }
 
 /// Owns a run and drives it until it terminates.
-pub struct RunLoop {
+type Observer<'a> = Box<dyn FnMut(&Run) + Send + 'a>;
+
+pub struct RunLoop<'a> {
     triggers: mpsc::Receiver<Trigger>,
     tick: Duration,
+    /// Called after each iteration so a UI can reflect what the supervisor just decided. Pushed
+    /// rather than polled: polling would show a picture from mid-iteration.
+    observer: Option<Observer<'a>>,
 }
 
-impl RunLoop {
+impl<'a> RunLoop<'a> {
     pub fn new(triggers: mpsc::Receiver<Trigger>) -> Self {
         Self {
             triggers,
             tick: TICK_INTERVAL,
+            observer: None,
         }
+    }
+
+    pub fn observing(mut self, observer: impl FnMut(&Run) + Send + 'a) -> Self {
+        self.observer = Some(Box::new(observer));
+        self
     }
 
     /// Shorter ticks for tests, which must not wait out the production interval.
@@ -70,6 +81,13 @@ impl RunLoop {
 
     /// Runs until the run terminates, is cancelled, or nothing can wake it again.
     pub async fn run(mut self, driver: &Driver<'_>, run: &mut Run) -> LoopExit {
+        macro_rules! observe {
+            () => {
+                if let Some(observer) = self.observer.as_mut() {
+                    observer(run);
+                }
+            };
+        }
         // Start dirty: a fresh run has an empty graph and needs planning immediately rather than
         // waiting for the first tick.
         let mut dirty = true;
@@ -80,7 +98,10 @@ impl RunLoop {
         ticker.tick().await;
 
         loop {
-            match driver.step(run, dirty).await {
+            let outcome = driver.step(run, dirty).await;
+            observe!();
+
+            match outcome {
                 IterationOutcome::Terminal(phase) => return LoopExit::Terminal(phase),
                 IterationOutcome::Advanced { .. } => {
                     // Work was done. Anything further depends on the agents, so wait for them

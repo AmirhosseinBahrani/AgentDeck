@@ -32,6 +32,7 @@ pub fn run() {
             events::pending_permission_count,
             events::start_supervisor_run,
             events::cancel_supervisor_run,
+            events::get_run_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

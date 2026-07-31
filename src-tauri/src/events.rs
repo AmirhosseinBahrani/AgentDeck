@@ -267,11 +267,27 @@ pub async fn start_supervisor_run(
     *state.live_run.lock().await = Some(workspaces.clone());
     *state.run_triggers.lock().await = Some(triggers);
 
+    let snapshot_slot = state.run_snapshot.clone();
+    let objective_for_snapshot = config.objective.clone();
+
     tauri::async_runtime::spawn(async move {
         let driver = Driver::new(&config, &planner, workspaces.as_ref());
         let mut run = Run::new();
 
-        let exit = RunLoop::new(trigger_rx).run(&driver, &mut run).await;
+        // Published after each iteration rather than polled from the run: polling would let the
+        // dashboard render a picture from mid-iteration, where tasks and phase disagree.
+        let observe = move |run: &Run| {
+            let snapshot = snapshot_of(&objective_for_snapshot, run);
+            let slot = snapshot_slot.clone();
+            tauri::async_runtime::spawn(async move {
+                *slot.lock().await = Some(snapshot);
+            });
+        };
+
+        let exit = RunLoop::new(trigger_rx)
+            .observing(observe)
+            .run(&driver, &mut run)
+            .await;
         tracing::info!(
             ?exit,
             iterations = run.state.iteration,
@@ -317,4 +333,107 @@ pub async fn get_session_transcript(
     Ok(state
         .session_transcript(&session_id, limit.unwrap_or(2_000))
         .await)
+}
+
+/// A snapshot of the current run for the dashboard.
+///
+/// A single query rather than several: the Team View needs objective, phase, agents and task
+/// counts to agree with each other, and fetching them separately would let the UI render a
+/// half-updated picture mid-iteration.
+#[derive(serde::Serialize, Default, Clone)]
+pub struct RunSnapshot {
+    pub active: bool,
+    pub objective: String,
+    pub phase: String,
+    pub iteration: u32,
+    pub spent_usd: f64,
+    pub open_escalations: usize,
+    pub tasks: Vec<TaskSummary>,
+    pub decisions: Vec<DecisionSummary>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct TaskSummary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub role: String,
+    pub attempts: u32,
+    pub review_rounds: u32,
+    pub objective_gate: bool,
+    pub blocked_reason: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct DecisionSummary {
+    pub iteration: u32,
+    pub stage: String,
+    pub kind: String,
+    /// "code", "claude" or "human" — the dashboard's most useful column, because it answers
+    /// whether the model was actually driving or code kept falling back.
+    pub decided_by: String,
+    pub rationale: String,
+    pub repaired: bool,
+}
+
+#[tauri::command]
+pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot, String> {
+    let snapshot = state.run_snapshot.lock().await.clone();
+    Ok(snapshot.unwrap_or_default())
+}
+
+/// Flattens a run into what the dashboard shows.
+fn snapshot_of(objective: &str, run: &deck_supervisor::driver::Run) -> RunSnapshot {
+    let tasks = run
+        .graph
+        .tasks()
+        .map(|task| TaskSummary {
+            id: task.id.to_string(),
+            title: run
+                .titles
+                .get(&task.id)
+                .cloned()
+                .unwrap_or_else(|| task.id.to_string()),
+            status: format!("{:?}", task.status).to_lowercase(),
+            role: run.roles.get(&task.id).cloned().unwrap_or_default(),
+            attempts: task.attempts,
+            review_rounds: task.review_rounds,
+            objective_gate: task.objective_gate,
+            blocked_reason: task.failure_reason.clone(),
+        })
+        .collect();
+
+    // Newest first, and capped: the decision log grows for the life of a run, and the panel only
+    // ever shows the recent tail.
+    let decisions = run
+        .log
+        .decisions
+        .iter()
+        .rev()
+        .take(50)
+        .map(|d| DecisionSummary {
+            iteration: d.iteration,
+            stage: d.stage.clone(),
+            kind: d.kind.clone(),
+            decided_by: format!("{:?}", d.decided_by).to_lowercase(),
+            rationale: d.rationale.clone(),
+            repaired: d.repair_count > 0,
+        })
+        .collect();
+
+    RunSnapshot {
+        active: !matches!(
+            run.state.phase,
+            deck_supervisor::loop_engine::RunPhase::Completed
+                | deck_supervisor::loop_engine::RunPhase::Failed
+                | deck_supervisor::loop_engine::RunPhase::Cancelled
+        ),
+        objective: objective.to_string(),
+        phase: format!("{:?}", run.state.phase).to_lowercase(),
+        iteration: run.state.iteration,
+        spent_usd: run.state.spent_usd,
+        open_escalations: run.state.open_escalations,
+        tasks,
+        decisions,
+    }
 }

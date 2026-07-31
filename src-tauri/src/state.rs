@@ -51,6 +51,8 @@ pub struct AppState {
     /// Wakes the running loop. Also how cancellation reaches it.
     pub run_triggers:
         Arc<Mutex<Option<tokio::sync::mpsc::Sender<deck_supervisor::loop_engine::Trigger>>>>,
+    /// Latest dashboard snapshot, refreshed by the loop after each iteration.
+    pub run_snapshot: Arc<Mutex<Option<crate::events::RunSnapshot>>>,
 }
 
 impl AppState {
@@ -108,6 +110,7 @@ impl AppState {
             demo_broker,
             live_run: Arc::new(Mutex::new(None)),
             run_triggers: Arc::new(Mutex::new(None)),
+            run_snapshot: Arc::new(Mutex::new(None)),
         })
     }
 

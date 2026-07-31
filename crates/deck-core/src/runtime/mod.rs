@@ -1,4 +1,5 @@
 pub mod claude_code;
+pub mod mock;
 
 use crate::domain::event::EventEnvelope;
 use crate::domain::ids::SessionId;

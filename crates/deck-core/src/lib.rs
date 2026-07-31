@@ -1,5 +1,6 @@
 pub mod bus;
 pub mod domain;
+pub mod git;
 pub mod ipc;
 pub mod permission;
 pub mod process;

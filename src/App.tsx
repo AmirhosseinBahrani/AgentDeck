@@ -1,51 +1,137 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, useState } from "react";
+import { TranscriptView } from "./features/sessions/TranscriptView";
+import {
+  useEventPump,
+  usePumpStats,
+  useSessionSubscriptions,
+} from "./hooks/useEventPump";
+import "./index.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+/**
+ * M1 shell.
+ *
+ * This is intentionally *not* a chat window with a sidebar. The spec's central point is that
+ * the product is Objective → Supervisor Run → Task Graph → Agents → Sessions, and that tabs
+ * are only one way to observe sessions. So the layout is a dashboard frame with the session
+ * transcript occupying a panel inside it — the Team View content fills in at M4/M6, but the
+ * hierarchy is established now rather than retrofitted around a chat.
+ */
+export default function App() {
+  useEventPump();
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  const [fixtures, setFixtures] = useState<string[]>([]);
+  const [sessions, setSessions] = useState<string[]>([]);
+  const [active, setActive] = useState<string | null>(null);
+  const stats = usePumpStats();
+
+  // Rust drops token deltas for anything not in this list, so it must reflect what is visible.
+  useSessionSubscriptions(active ? [active] : []);
+
+  useEffect(() => {
+    void invoke<string[]>("list_fixtures").then(setFixtures).catch(() => {});
+  }, []);
+
+  async function startReplay(name: string) {
+    const id = await invoke<string>("replay_fixture", { name });
+    setSessions((prev) => [...prev, id]);
+    setActive(id);
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
+    <div className="flex h-full flex-col bg-neutral-950 text-neutral-200">
+      <header className="flex h-9 shrink-0 items-center justify-between border-b border-neutral-800 px-3">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-semibold">AgentDeck</span>
+          <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
+            M1 · runtime streaming
+          </span>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-neutral-500">
+          <span>{stats.batches} batches</span>
+          <span>{stats.events} events</span>
+          <span className={stats.gaps > 0 ? "text-amber-400" : undefined}>
+            {stats.gaps} gaps
+          </span>
+        </div>
+      </header>
 
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+      <div className="flex min-h-0 flex-1">
+        <aside className="flex w-56 shrink-0 flex-col border-r border-neutral-800">
+          <Section title="Replay a captured session">
+            {fixtures.length === 0 && (
+              <p className="px-2 text-[11px] text-neutral-600">No fixtures embedded</p>
+            )}
+            {fixtures.map((name) => (
+              <button
+                key={name}
+                onClick={() => void startReplay(name)}
+                className="w-full rounded px-2 py-1 text-left text-[12px] text-neutral-300 hover:bg-neutral-800"
+              >
+                {name}
+              </button>
+            ))}
+          </Section>
+
+          <Section title={`Sessions (${sessions.length})`}>
+            {sessions.length === 0 && (
+              <p className="px-2 text-[11px] text-neutral-600">
+                Start a replay to stream events
+              </p>
+            )}
+            {sessions.map((id, i) => (
+              <button
+                key={id}
+                onClick={() => setActive(id)}
+                className={`flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] ${
+                  active === id
+                    ? "bg-neutral-800 text-neutral-100"
+                    : "text-neutral-400 hover:bg-neutral-900"
+                }`}
+              >
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    active === id ? "bg-emerald-400" : "bg-neutral-600"
+                  }`}
+                />
+                <span className="truncate font-mono text-[11px]">
+                  session {i + 1} · {id.slice(0, 8)}
+                </span>
+              </button>
+            ))}
+          </Section>
+        </aside>
+
+        <main className="flex min-w-0 flex-1 flex-col">
+          <div className="flex h-8 shrink-0 items-center border-b border-neutral-800 px-3 text-[11px] text-neutral-500">
+            {active ? (
+              <span className="font-mono">{active}</span>
+            ) : (
+              <span>No active session</span>
+            )}
+          </div>
+          <div className="min-h-0 flex-1">
+            <TranscriptView sessionId={active} />
+          </div>
+        </main>
       </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
 
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+      <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-neutral-800 px-3 text-[10px] text-neutral-600">
+        <span>Sessions: {sessions.length}</span>
+        <span>Watching: {active ? 1 : 0}</span>
+        <span>Last seq: {stats.lastSeq}</span>
+      </footer>
+    </div>
   );
 }
 
-export default App;
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="border-b border-neutral-800 p-2">
+      <h2 className="mb-1 px-2 text-[10px] font-medium tracking-wider text-neutral-500 uppercase">
+        {title}
+      </h2>
+      <div className="space-y-0.5">{children}</div>
+    </div>
+  );
+}

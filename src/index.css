@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+/* Dense desktop scale. Tailwind's defaults are tuned for marketing pages; a dashboard
+   tracking a dozen concurrent workers needs roughly half the vertical rhythm. */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-size: 13px;
+  /* Counters and costs sit in columns; proportional digits make them jitter as they update. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A fixed-height desktop surface, not a scrolling document. */
+#root {
+  overflow: hidden;
+}

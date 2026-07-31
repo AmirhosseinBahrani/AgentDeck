@@ -1,5 +1,6 @@
 pub mod bus;
 pub mod domain;
+pub mod ipc;
 pub mod process;
 pub mod runtime;
 pub mod store;

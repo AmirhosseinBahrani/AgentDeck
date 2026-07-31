@@ -1,4 +1,6 @@
+pub mod bus;
 pub mod domain;
+pub mod process;
 pub mod runtime;
 pub mod store;
 

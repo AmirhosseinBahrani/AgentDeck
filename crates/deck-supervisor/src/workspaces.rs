@@ -55,6 +55,12 @@ pub trait Workspaces: Send + Sync {
     /// The branch a task's work is on. `None` when it never got a worktree.
     fn branch(&self, task_id: TaskId) -> Option<String>;
 
+    /// Whether the agent working this task is still running.
+    ///
+    /// `None` means no agent was ever started for it, which is different from one that has died
+    /// and must not be treated as a failure.
+    fn agent_alive(&self, task_id: TaskId) -> Option<bool>;
+
     /// Merges the given branches into one tree and runs the project's tests there.
     ///
     /// The last gate before a run may call itself complete. Every task passing alone says
@@ -121,6 +127,8 @@ pub struct FakeWorkspaces {
     /// What the next integration should return. Scripted, because a fake has no branches to
     /// merge and the driver's behaviour on each outcome is the thing under test.
     integration: parking_lot::Mutex<Option<IntegrationOutcome>>,
+    /// Tasks whose agent a test has declared dead.
+    dead: parking_lot::Mutex<Vec<TaskId>>,
 }
 
 impl FakeWorkspaces {
@@ -133,7 +141,13 @@ impl FakeWorkspaces {
             worktrees: parking_lot::Mutex::new(Default::default()),
             fail_next: parking_lot::Mutex::new(false),
             integration: parking_lot::Mutex::new(None),
+            dead: parking_lot::Mutex::new(Vec::new()),
         }
+    }
+
+    /// Simulates an agent dying without reporting anything.
+    pub fn kill_agent(&self, task_id: TaskId) {
+        self.dead.lock().push(task_id);
     }
 
     pub fn set_integration(&self, outcome: IntegrationOutcome) {
@@ -189,6 +203,15 @@ impl Workspaces for FakeWorkspaces {
             .lock()
             .contains_key(&task_id)
             .then(|| format!("agentdeck/task-{}", &task_id.to_string()[..8]))
+    }
+
+    fn agent_alive(&self, task_id: TaskId) -> Option<bool> {
+        // Alive unless a test says otherwise, so scripted runs are not reaped out from under
+        // themselves by a fake that has no processes at all.
+        if self.dead.lock().contains(&task_id) {
+            return Some(false);
+        }
+        self.worktrees.lock().contains_key(&task_id).then_some(true)
     }
 
     async fn integrate(

@@ -193,6 +193,7 @@ impl<'a> Driver<'a> {
 
             match stage {
                 Stage::IngestReports => self.stage_ingest_reports(run),
+                Stage::Reap => self.stage_reap(run),
                 Stage::Plan if run.graph.is_empty() => self.stage_plan(run).await,
                 Stage::Assign => self.stage_assign(run).await,
                 Stage::Dispatch => dispatched = self.stage_dispatch(run).await,
@@ -209,6 +210,65 @@ impl<'a> Driver<'a> {
         }
 
         IterationOutcome::Advanced { dispatched }
+    }
+
+    // -----------------------------------------------------------------------
+    // Reap — pure: notices agents that died without saying anything
+    // -----------------------------------------------------------------------
+
+    /// Fails tasks whose agent is gone but never claimed completion.
+    ///
+    /// `claim_task_done` is the only legal completion path, so a session that simply exits has
+    /// failed — it has not quietly succeeded. Without this the task sits in `Running` forever:
+    /// nothing will report on it, no trigger will arrive, and the run stalls with no indication
+    /// of why. A crashed CLI, an out-of-memory kill or an agent that talked itself into calling
+    /// it a day all look identical from here, and all of them mean the work did not finish.
+    ///
+    /// The attempt was already counted when the agent started, so this only decides whether any
+    /// remain — a retry re-dispatches, and an exhausted task fails for good.
+    fn stage_reap(&self, run: &mut Run) {
+        let dead: Vec<TaskId> = run
+            .graph
+            .tasks()
+            .filter(|t| t.status == TaskStatus::Running)
+            // Only tasks we actually dispatched. `None` means no agent was ever started, which
+            // is a scheduling state rather than a death.
+            .filter(|t| self.workspaces.agent_alive(t.id) == Some(false))
+            .map(|t| t.id)
+            .collect();
+
+        for id in dead {
+            let Some(current) = run.graph.get(id).cloned() else {
+                continue;
+            };
+            let attempts_left = current.attempts < current.limits.max_attempts;
+
+            if let Ok(next) = apply(
+                &current,
+                TaskEvent::Failed {
+                    reason: "the agent exited without claiming the task done".into(),
+                },
+            ) {
+                run.graph.set_state(next);
+            }
+            // Nothing left to try is a decision only a human can take further, so it is raised
+            // rather than left as a quietly failed task nobody is told about.
+            if !attempts_left {
+                run.state.open_escalations += 1;
+            }
+
+            run.log.record_code_decision(
+                run.state.iteration,
+                Stage::Reap,
+                "agent_died",
+                if attempts_left {
+                    "retrying"
+                } else {
+                    "attempts_exhausted"
+                },
+                &format!("task {id} lost its agent without a completion claim"),
+            );
+        }
     }
 
     // -----------------------------------------------------------------------

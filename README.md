@@ -45,6 +45,37 @@ the CLI and pinned by fixture tests in `crates/deck-core/tests/`:
   never inherit the developer's plugins, hooks or MCP servers. This also cut cache-creation tokens
   from ~31k to ~8k per turn.
 
+## What the supervisor guarantees
+
+These are enforced in code, not by prompting, and each has tests that fail if the guarantee is
+removed:
+
+- **Completion is a predicate, not a judgement.** `claim_task_done` only *queues* verification.
+  The supervisor runs the task's acceptance criteria itself and a failing command means a failed
+  review — the reviewer is never invoked, so no model can argue past a red test.
+- **A run is not complete until the branches merge.** Every task passes in its own worktree, which
+  says nothing about whether the branches work together. The final gate merges them into a
+  disposable tree and runs the project's tests there. A conflict is reported, never resolved
+  automatically: resolving it means choosing whose work to discard.
+- **An agent that exits without claiming done has failed.** It has not quietly succeeded. The
+  attempt is spent, and a task that keeps losing its agent stops and asks for a human.
+- **Autonomy is enforced at dispatch**, the single point where a process gets a worktree with edit
+  rights — not in the UI. An approval authorises one start, not the task, so a retry needs a new
+  one.
+- **Force-kill never waits on the agent.** The one most in need of killing is the one that has
+  stopped answering. The worktree and its changes survive, and the task is cancelled rather than
+  failed, so it does not consume a retry.
+
+## Running unattended
+
+Closing the window keeps the run alive; quitting from the tray is a separate, deliberate action
+that stops the agents first. On Unix a process group outlives its parent, so a crash leaves agents
+running — every spawn is recorded before it is given work, and startup kills what a previous
+launch left behind, while leaving a concurrent instance's agents alone.
+
+Sessions are persisted with the directory they ran in, because Claude buckets conversations by
+working directory and `--resume` only works from there.
+
 ## Development
 
 ```sh
@@ -53,4 +84,4 @@ cargo test              # core is testable without linking Tauri
 pnpm tauri dev
 ```
 
-Work proceeds in milestones (M0–M8), one PR each, squash-merged to keep `main` linear.
+One PR per coherent bundle, squash-merged to keep `main` linear.

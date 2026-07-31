@@ -36,7 +36,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dashmap = "6"
 parking_lot = "0.12"
-ts-rs = { version = "10", features = ["serde-compat", "uuid-impl"] }
+ts-rs = { version = "12", features = ["serde-compat", "uuid-impl"] }
 sysinfo = "0.33"
 dunce = "1"
 

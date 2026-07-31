@@ -302,3 +302,19 @@ pub async fn cancel_supervisor_run(state: State<'_, AppState>) -> Result<usize, 
         None => Ok(0),
     }
 }
+
+/// A session's recorded transcript.
+///
+/// The transcript store in the frontend is in-memory and per-run, so without this a restart shows
+/// an empty pane for work that actually happened. Reading from the event log is what makes the
+/// durable log worth keeping.
+#[tauri::command]
+pub async fn get_session_transcript(
+    state: State<'_, AppState>,
+    session_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<EventEnvelope>, String> {
+    Ok(state
+        .session_transcript(&session_id, limit.unwrap_or(2_000))
+        .await)
+}

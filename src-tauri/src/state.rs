@@ -3,16 +3,16 @@ use deck_core::domain::event::EventEnvelope;
 use deck_core::domain::ids::Seq;
 use deck_core::permission::{worker_defaults, EffectivePolicy, PermissionBroker};
 use deck_core::runtime::mock::{MockRuntime, Speed};
+use deck_core::store::Store;
 use deck_core::workspace::WorkspaceRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Shared application state.
 ///
-/// The durable event receiver is drained into `history` for now. Once the store lands in the
-/// app wiring this becomes the SQLite writer task; keeping an in-memory log until then means
-/// `get_events_since` already works, so the frontend's gap-backfill path is exercised from
-/// the start rather than being stubbed and forgotten.
+/// The durable event receiver is drained into SQLite by a writer task that batches commits. If
+/// that task stopped, the bounded channel would fill and backpressure the agents — which is the
+/// intended failure mode: slowing an agent beats losing its audit log.
 /// Captured `claude` v2.1.153 sessions, compiled in. Paths are relative to this source file.
 const EMBEDDED_FIXTURES: &[(&str, &str)] = &[
     (
@@ -35,7 +35,7 @@ const EMBEDDED_FIXTURES: &[(&str, &str)] = &[
 
 pub struct AppState {
     pub bus: Arc<EventBus>,
-    pub history: Arc<Mutex<Vec<EventEnvelope>>>,
+    pub store: Store,
     pub mock: Arc<MockRuntime>,
     /// Sessions the UI is currently displaying. Deltas for anything else are dropped at the
     /// source rather than crossing the IPC bridge.
@@ -54,20 +54,21 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new() -> Self {
-        let (bus, mut durable) = EventBus::new();
-        let history: Arc<Mutex<Vec<EventEnvelope>>> = Arc::new(Mutex::new(Vec::new()));
+    /// Fails only if the database cannot be opened or migrated, which is not recoverable: without
+    /// it there is no audit log, and this app's guarantees rest on having one.
+    pub async fn new() -> Result<Self, String> {
+        let (bus, durable) = EventBus::new();
+
+        let store = Store::open(Self::database_path())
+            .await
+            .map_err(|e| format!("could not open the AgentDeck database: {e}"))?;
 
         {
-            let history = history.clone();
+            let store = store.clone();
             // tauri::async_runtime, not tokio::spawn: AppState is constructed before the app
             // runs, so no tokio reactor exists yet and a bare tokio::spawn panics.
             tauri::async_runtime::spawn(async move {
-                // Drains continuously. If this task stopped, the bounded durable channel
-                // would fill and backpressure the agents rather than lose events.
-                while let Some(envelope) = durable.recv().await {
-                    history.lock().await.push(envelope);
-                }
+                deck_core::store::events::run_writer(store, durable).await;
             });
         }
 
@@ -98,32 +99,47 @@ impl AppState {
             std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
         ));
 
-        Self {
+        Ok(Self {
             bus,
-            history,
+            store,
             mock,
             watched: Arc::new(Mutex::new(Vec::new())),
             workspaces,
             demo_broker,
             live_run: Arc::new(Mutex::new(None)),
             run_triggers: Arc::new(Mutex::new(None)),
-        }
+        })
+    }
+
+    /// Beside the user's data directory rather than the current working directory, so a run does
+    /// not leave a database inside whatever repository the app happened to be launched from.
+    fn database_path() -> std::path::PathBuf {
+        let base = dirs_next_home()
+            .map(|h| h.join(".agentdeck"))
+            .unwrap_or_else(|| std::path::PathBuf::from(".agentdeck"));
+        let _ = std::fs::create_dir_all(&base);
+        base.join("agentdeck.sqlite")
     }
 
     pub async fn events_since(&self, seq: Seq, limit: usize) -> Vec<EventEnvelope> {
-        self.history
-            .lock()
+        deck_core::store::events::since(&self.store, seq, limit)
             .await
-            .iter()
-            .filter(|e| e.seq > seq)
-            .take(limit)
-            .cloned()
-            .collect()
+            .unwrap_or_else(|e| {
+                // A failed backfill leaves a gap in the UI rather than crashing it; the next batch
+                // will report the gap again and it can retry.
+                tracing::error!(%e, "event backfill failed");
+                Vec::new()
+            })
+    }
+
+    /// A session's recorded transcript, so reopening the app restores what the user was watching.
+    pub async fn session_transcript(&self, session_id: &str, limit: usize) -> Vec<EventEnvelope> {
+        deck_core::store::events::for_session(&self.store, session_id, limit)
+            .await
+            .unwrap_or_default()
     }
 }
 
-impl Default for AppState {
-    fn default() -> Self {
-        Self::new()
-    }
+fn dirs_next_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
 }

@@ -5,6 +5,8 @@
 //! under load, which matters because the event writer commits continuously while the UI
 //! reads concurrently.
 
+pub mod events;
+
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
 use std::path::Path;

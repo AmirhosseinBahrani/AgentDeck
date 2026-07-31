@@ -15,11 +15,17 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState::new())
+        .manage(
+            // Blocking here is correct: without a database there is no audit log, and the app's
+            // guarantees rest on having one. Starting up degraded would be worse than not starting.
+            tauri::async_runtime::block_on(AppState::new())
+                .expect("AgentDeck could not open its database"),
+        )
         .invoke_handler(tauri::generate_handler![
             events::subscribe_events,
             events::set_session_subscriptions,
             events::get_events_since,
+            events::get_session_transcript,
             events::replay_fixture,
             events::list_fixtures,
             events::respond_permission,

@@ -35,16 +35,20 @@ fn tool_use_and_result_are_paired_by_id() {
     let call = evs
         .iter()
         .find_map(|e| match e {
-            AgentEvent::ToolCall { tool_use_id, tool, .. } => Some((tool_use_id.clone(), tool.clone())),
+            AgentEvent::ToolCall {
+                tool_use_id, tool, ..
+            } => Some((tool_use_id.clone(), tool.clone())),
             _ => None,
         })
         .expect("expected a tool call");
     assert_eq!(call.1, "Read");
 
-    let matched = evs.iter().any(|e| matches!(
-        e,
-        AgentEvent::ToolResult { tool_use_id, .. } if *tool_use_id == call.0
-    ));
+    let matched = evs.iter().any(|e| {
+        matches!(
+            e,
+            AgentEvent::ToolResult { tool_use_id, .. } if *tool_use_id == call.0
+        )
+    });
     assert!(matched, "tool_result did not correlate to its tool_use id");
 }
 
@@ -63,7 +67,10 @@ fn first_init_is_a_handshake_and_later_inits_are_turn_boundaries() {
         .filter(|e| matches!(e, AgentEvent::TurnStarted))
         .count();
 
-    assert_eq!(ready, 1, "startup must be signalled exactly once per process");
+    assert_eq!(
+        ready, 1,
+        "startup must be signalled exactly once per process"
+    );
     assert_eq!(turns, 1, "the second init should read as a turn boundary");
 }
 
@@ -81,7 +88,10 @@ fn per_turn_costs_must_be_summed_not_replaced() {
     assert_eq!(costs.len(), 2, "one result per turn");
     // Each turn reports its own cost; taking the last value would undercount the session.
     let total: f64 = costs.iter().sum();
-    assert!(total > costs[1], "summing must exceed any single turn's cost");
+    assert!(
+        total > costs[1],
+        "summing must exceed any single turn's cost"
+    );
 }
 
 #[test]
@@ -93,7 +103,8 @@ fn out_of_worktree_write_surfaces_as_a_classified_permission_request() {
     // deny and no permission request appears. The control_response to our `initialize`
     // must still parse cleanly rather than being treated as an unknown event.
     assert!(
-        !evs.iter().any(|e| matches!(e, AgentEvent::Unrecognized { .. })),
+        !evs.iter()
+            .any(|e| matches!(e, AgentEvent::Unrecognized { .. })),
         "control_response should be recognized, not passed through as unknown"
     );
 }
@@ -104,7 +115,9 @@ fn rate_limit_events_are_captured_with_reset_timestamp() {
     let rl = evs
         .iter()
         .find_map(|e| match e {
-            AgentEvent::RateLimited { status, resets_at, .. } => Some((status.clone(), *resets_at)),
+            AgentEvent::RateLimited {
+                status, resets_at, ..
+            } => Some((status.clone(), *resets_at)),
             _ => None,
         })
         .expect("expected a rate_limit_event in the captured stream");
@@ -122,7 +135,9 @@ fn structured_output_is_present_only_on_the_final_result() {
     let with_schema: Vec<_> = evs
         .iter()
         .filter_map(|e| match e {
-            AgentEvent::TurnComplete { structured_output, .. } => structured_output.as_ref(),
+            AgentEvent::TurnComplete {
+                structured_output, ..
+            } => structured_output.as_ref(),
             _ => None,
         })
         .collect();

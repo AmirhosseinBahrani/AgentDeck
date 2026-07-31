@@ -15,4 +15,5 @@ pub mod driver;
 pub mod graph;
 pub mod loop_engine;
 pub mod planner;
+pub mod run_loop;
 pub mod workspaces;

@@ -48,6 +48,9 @@ pub struct AppState {
     pub demo_broker: Arc<PermissionBroker>,
     /// The agents of the current run, so the operator can stop them. `None` when no run is active.
     pub live_run: Arc<Mutex<Option<Arc<crate::supervision::LiveWorkspaces>>>>,
+    /// Wakes the running loop. Also how cancellation reaches it.
+    pub run_triggers:
+        Arc<Mutex<Option<tokio::sync::mpsc::Sender<deck_supervisor::loop_engine::Trigger>>>>,
 }
 
 impl AppState {
@@ -103,6 +106,7 @@ impl AppState {
             workspaces,
             demo_broker,
             live_run: Arc::new(Mutex::new(None)),
+            run_triggers: Arc::new(Mutex::new(None)),
         }
     }
 

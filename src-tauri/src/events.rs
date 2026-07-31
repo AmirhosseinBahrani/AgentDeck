@@ -201,8 +201,9 @@ pub async fn start_supervisor_run(
     max_cost_usd: Option<f64>,
 ) -> Result<(), String> {
     use deck_supervisor::decision::PlanLimits;
-    use deck_supervisor::driver::{Driver, IterationOutcome, Run, RunConfig, TeamMember};
+    use deck_supervisor::driver::{Driver, Run, RunConfig, TeamMember};
     use deck_supervisor::loop_engine::RunLimits;
+    use deck_supervisor::run_loop::{forward_event, RunLoop};
 
     let repo = state.workspaces.repo().to_path_buf();
 
@@ -240,30 +241,42 @@ pub async fn start_supervisor_run(
     ));
     let planner = crate::supervision::CliPlanner::new(repo);
 
+    // Bounded: a full channel drops a redundant wake-up rather than backpressuring the event bus.
+    // Losing one is safe because the tick picks the work up; stalling the bus would slow every
+    // agent.
+    let (triggers, trigger_rx) = tokio::sync::mpsc::channel(64);
+
+    // Agent activity wakes the loop. Without this the run would only advance on the tick, which
+    // would add up to a minute of latency to every handoff.
+    {
+        let mut observer = state.bus.subscribe();
+        let triggers = triggers.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                match observer.recv().await {
+                    Ok(envelope) => {
+                        forward_event(&triggers, &envelope.event);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
     *state.live_run.lock().await = Some(workspaces.clone());
+    *state.run_triggers.lock().await = Some(triggers);
 
     tauri::async_runtime::spawn(async move {
         let driver = Driver::new(&config, &planner, workspaces.as_ref());
         let mut run = Run::new();
 
-        loop {
-            match driver.step(&mut run, true).await {
-                IterationOutcome::Terminal(phase) => {
-                    tracing::info!(?phase, "supervisor run finished");
-                    break;
-                }
-                // Idle means the sweep found nothing to do. The loop is event-driven in the
-                // finished design; until the trigger plumbing lands, stopping is honest — better
-                // than a hot loop that spends money rediscovering the same nothing.
-                IterationOutcome::Idle => {
-                    tracing::info!("supervisor run idle; waiting for agent activity");
-                    break;
-                }
-                IterationOutcome::Advanced { dispatched } => {
-                    tracing::info!(count = dispatched.len(), "iteration advanced");
-                }
-            }
-        }
+        let exit = RunLoop::new(trigger_rx).run(&driver, &mut run).await;
+        tracing::info!(
+            ?exit,
+            iterations = run.state.iteration,
+            "supervisor run ended"
+        );
     });
 
     Ok(())
@@ -275,6 +288,14 @@ pub async fn start_supervisor_run(
 /// asking to stop must always take effect immediately.
 #[tauri::command]
 pub async fn cancel_supervisor_run(state: State<'_, AppState>) -> Result<usize, String> {
+    // Tell the loop first so it stops deciding, then kill the agents. The other order would let
+    // one more iteration dispatch work moments after the operator asked to stop.
+    if let Some(triggers) = state.run_triggers.lock().await.take() {
+        let _ = triggers
+            .send(deck_supervisor::loop_engine::Trigger::CancelRequested)
+            .await;
+    }
+
     let live = state.live_run.lock().await.take();
     match live {
         Some(workspaces) => Ok(workspaces.kill_all()),

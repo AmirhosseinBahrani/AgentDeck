@@ -114,6 +114,7 @@ export interface RecoveryReport {
   killed_orphans: number;
   stale_records: number;
   interrupted_sessions: number;
+  interrupted_runs: number;
 }
 
 export interface ResumableSummary {

@@ -40,6 +40,7 @@ export function RecoveryBanner() {
     !report ||
     (report.killed_orphans === 0 &&
       report.interrupted_sessions === 0 &&
+      report.interrupted_runs === 0 &&
       resumable.length === 0);
 
   if (dismissed || nothingHappened) {
@@ -113,6 +114,13 @@ function describe(report: RecoveryReport): string {
   if (report.killed_orphans > 0) {
     parts.push(
       `${report.killed_orphans} agent${report.killed_orphans === 1 ? "" : "s"} were still running and have been stopped`,
+    );
+  }
+  if (report.interrupted_runs > 0) {
+    // Said plainly, because the operator's reasonable assumption is that the run carried on
+    // without them. A run cannot outlive the process that was driving it.
+    parts.push(
+      `${report.interrupted_runs} run${report.interrupted_runs === 1 ? "" : "s"} did not survive the restart`,
     );
   }
   if (report.interrupted_sessions > 0) {

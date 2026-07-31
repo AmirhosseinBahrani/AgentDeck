@@ -311,6 +311,19 @@ pub async fn start_supervisor_run(
     let approval_queue = crate::supervision::GrantedApprovals(approvals);
     let app_handle = app.clone();
 
+    // The supervisor has no long-lived model session on purpose: its memory is meant to *be* the
+    // database. That only holds if the graph and the decision log reach disk, so they are
+    // written after every iteration.
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let persist = crate::persistence::RunWriter::new(
+        state.store.clone(),
+        run_id,
+        state.identity.project_id.clone(),
+        config.objective.clone(),
+        config.autonomy.as_str().to_string(),
+        config.limits.max_cost_usd,
+    );
+
     tauri::async_runtime::spawn(async move {
         let driver = Driver::new(&config, &planner, workspaces.as_ref())
             .with_reports(&report_queue)
@@ -324,6 +337,7 @@ pub async fn start_supervisor_run(
             // The tray is the only surface visible with the window closed, which is the normal
             // way a long run is watched.
             crate::background::update_tray(&app_handle, &snapshot);
+            persist.record(run);
             let slot = snapshot_slot.clone();
             tauri::async_runtime::spawn(async move {
                 *slot.lock().await = Some(snapshot);
@@ -403,6 +417,37 @@ pub async fn force_kill_agent(state: State<'_, AppState>, task_id: String) -> Re
         Some(workspaces) => Ok(workspaces.kill_task(id)),
         None => Ok(false),
     }
+}
+
+/// What the last run in this project was doing.
+///
+/// The point of persisting the graph and the decision log is that reopening the app is not a
+/// blank screen: the operator can see what was asked for, how far it got, and what the
+/// supervisor decided — including for a run that ended while they were away.
+#[derive(serde::Serialize)]
+pub struct PastRunSummary {
+    pub run_id: String,
+    pub objective: String,
+    pub status: String,
+    pub autonomy: String,
+    pub iteration: u32,
+    pub spent_usd: f64,
+    pub task_count: i64,
+    pub decision_count: i64,
+}
+
+#[tauri::command]
+pub async fn get_last_run(state: State<'_, AppState>) -> Result<Option<PastRunSummary>, String> {
+    Ok(state.last_run().await.map(|run| PastRunSummary {
+        run_id: run.run_id,
+        objective: run.objective,
+        status: run.status,
+        autonomy: run.autonomy,
+        iteration: run.iteration,
+        spent_usd: run.spent_usd,
+        task_count: run.task_count,
+        decision_count: run.decision_count,
+    }))
 }
 
 /// Lets a task start.

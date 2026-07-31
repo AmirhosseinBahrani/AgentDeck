@@ -5,7 +5,7 @@ use deck_core::permission::{worker_defaults, EffectivePolicy, PermissionBroker};
 use deck_core::runtime::mock::{MockRuntime, Speed};
 use deck_core::store::identity::{self, LocalIdentity};
 use deck_core::store::processes::{self, BootId};
-use deck_core::store::{sessions, Store};
+use deck_core::store::{runs, sessions, Store};
 use deck_core::workspace::WorkspaceRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -78,6 +78,8 @@ pub struct RecoveryReport {
     pub stale_records: usize,
     /// Sessions a crash interrupted, which can be resumed from their original directory.
     pub interrupted_sessions: u64,
+    /// Runs a crash left mid-flight. A run cannot outlive the process driving it.
+    pub interrupted_runs: u64,
 }
 
 impl AppState {
@@ -190,11 +192,29 @@ impl AppState {
                 0
             });
 
+        // A run cannot survive the process that was driving it: the loop, the agents and the
+        // in-memory graph all died with it. Left alone the row would show a live run that
+        // nothing is advancing, and no amount of waiting would change that.
+        let interrupted_runs = runs::mark_interrupted_on_boot(store)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(%e, "could not close out interrupted runs");
+                0
+            });
+
         RecoveryReport {
             killed_orphans: reaped.killed.len(),
             stale_records: reaped.stale.len(),
             interrupted_sessions: interrupted,
+            interrupted_runs,
         }
+    }
+
+    /// What the last run in this project was doing, so a relaunch is not a blank screen.
+    pub async fn last_run(&self) -> Option<runs::PastRun> {
+        runs::last_run(&self.store, &self.identity.project_id)
+            .await
+            .unwrap_or_default()
     }
 
     /// Sessions a crash left behind, each with the directory `--resume` must run from.

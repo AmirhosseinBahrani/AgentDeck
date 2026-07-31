@@ -13,6 +13,7 @@ use crate::planner::{Decisions, Planner};
 use crate::workspaces::{render_brief, DispatchRequest, NoReports, ReportQueue, Workspaces};
 use deck_core::domain::ids::{AgentId, TaskId};
 use deck_core::domain::task::{apply, TaskEvent, TaskState, TaskStatus};
+use deck_core::git::{Contribution, IntegrationOutcome};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -197,6 +198,7 @@ impl<'a> Driver<'a> {
                 Stage::Dispatch => dispatched = self.stage_dispatch(run).await,
                 Stage::Verify => self.stage_verify(run).await,
                 Stage::Judge => self.stage_judge(run).await,
+                Stage::CompletionCheck => self.stage_completion_check(run).await,
                 Stage::Commit => {
                     run.state.iteration += 1;
                     run.state.spent_usd = run.log.cost();
@@ -207,6 +209,119 @@ impl<'a> Driver<'a> {
         }
 
         IterationOutcome::Advanced { dispatched }
+    }
+
+    // -----------------------------------------------------------------------
+    // Completion check — the integration gate. Pure code; no model is consulted
+    // -----------------------------------------------------------------------
+
+    /// Merges every completed task's branch and runs the project's tests against the result.
+    ///
+    /// Runs only once every objective-gating task is complete, because merging half a plan
+    /// proves nothing and burns a test run each iteration.
+    ///
+    /// This exists because "every task passed" means every task passed *alone*. Agents work in
+    /// separate worktrees on separate branches, so two green tasks can still be incompatible —
+    /// one renames what the other calls. Nothing in per-task verification can see that, which
+    /// makes this the only check standing between a green dashboard and a pile of branches that
+    /// do not combine.
+    async fn stage_completion_check(&self, run: &mut Run) {
+        if run.state.integrated || !run.graph.objective_satisfied() {
+            return;
+        }
+
+        // Deterministic order, so the same run integrates the same way twice and a conflict is
+        // reproducible rather than a function of hash iteration order.
+        let mut contributions: Vec<Contribution> = run
+            .graph
+            .tasks()
+            .filter(|t| t.status == TaskStatus::Completed)
+            .filter_map(|t| {
+                self.workspaces.branch(t.id).map(|branch| Contribution {
+                    task_id: t.id.to_string(),
+                    branch,
+                })
+            })
+            .collect();
+        contributions.sort_by(|a, b| a.task_id.cmp(&b.task_id));
+
+        let outcome = self
+            .workspaces
+            .integrate(
+                &contributions,
+                &self.config.default_test_command,
+                self.config.verification_timeout,
+            )
+            .await;
+
+        match outcome {
+            IntegrationOutcome::Integrated { merged } => {
+                run.state.integrated = true;
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "integration",
+                    "merged_and_green",
+                    &format!(
+                        "{} branches merged and the project tests passed",
+                        merged.len()
+                    ),
+                );
+            }
+
+            // A conflict means two agents were given overlapping work. Resolving it for them
+            // would mean choosing which agent's work to discard, which is not a decision code
+            // or a model should be making silently.
+            IntegrationOutcome::Conflicted {
+                branch,
+                task_id,
+                files,
+            } => {
+                run.state.open_escalations += 1;
+                run.state.phase = RunPhase::BlockedOnHuman;
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "integration_conflict",
+                    "overlapping_work",
+                    &format!(
+                        "{branch} (task {task_id}) conflicts with work already merged, in: {}",
+                        if files.is_empty() {
+                            "unknown files".to_string()
+                        } else {
+                            files.join(", ")
+                        }
+                    ),
+                );
+            }
+
+            // Every task passed and the combination does not work. No individual task is at
+            // fault, so blaming one by reopening it would send an agent to fix code that is
+            // correct on its own.
+            IntegrationOutcome::TestsFailed { output } => {
+                run.state.open_escalations += 1;
+                run.state.phase = RunPhase::BlockedOnHuman;
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "integration_tests_failed",
+                    "combined_result_broken",
+                    &output,
+                );
+            }
+
+            IntegrationOutcome::Inconclusive { reason } => {
+                run.state.open_escalations += 1;
+                run.state.phase = RunPhase::BlockedOnHuman;
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "integration_inconclusive",
+                    "environment",
+                    &reason,
+                );
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

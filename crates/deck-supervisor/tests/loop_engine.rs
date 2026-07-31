@@ -136,9 +136,27 @@ fn verification_and_adjudication_are_pure_so_a_model_cannot_override_a_red_test(
 // ---------------------------------------------------------------------------
 
 #[test]
-fn the_run_completes_when_every_gate_task_is_done() {
+fn every_gate_task_being_done_is_not_yet_completion() {
+    // Each task passed in its own worktree on its own branch, which says nothing about whether
+    // the branches combine — one agent can rename what another calls and both stay green. So
+    // the sweep keeps iterating into the integration gate rather than declaring success.
     let g = graph_with(vec![completed_gate()]);
     let outcome = sweep(&RunState::default(), &g, RunLimits::default(), true);
+    assert_eq!(outcome.terminal, None);
+    assert!(
+        outcome.should_iterate,
+        "the integration gate still has to run"
+    );
+}
+
+#[test]
+fn the_run_completes_once_the_branches_integrate() {
+    let g = graph_with(vec![completed_gate()]);
+    let state = RunState {
+        integrated: true,
+        ..RunState::default()
+    };
+    let outcome = sweep(&state, &g, RunLimits::default(), true);
     assert_eq!(outcome.terminal, Some(RunPhase::Completed));
     assert!(!outcome.should_iterate);
 }

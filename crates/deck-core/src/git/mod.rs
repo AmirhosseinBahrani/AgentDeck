@@ -15,8 +15,10 @@
 //! contention is real once several agents are each running `git status`, and `worktree add`
 //! takes that lock too. This is not defensive programming; it is the observed failure.
 
+pub mod integration;
 pub mod worktree;
 
+pub use integration::{Contribution, IntegrationOutcome};
 pub use worktree::{WorktreeManager, WorktreeSpec, WorktreeStatus};
 
 use std::collections::HashMap;

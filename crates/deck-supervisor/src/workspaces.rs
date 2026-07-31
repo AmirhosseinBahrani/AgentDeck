@@ -10,6 +10,7 @@
 use crate::contract::TaskContract;
 use async_trait::async_trait;
 use deck_core::domain::ids::{AgentId, SessionId, TaskId};
+use deck_core::git::{Contribution, IntegrationOutcome};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -50,6 +51,21 @@ pub trait Workspaces: Send + Sync {
     /// which the verification gate reports as inconclusive rather than failed, since the work was
     /// never judged.
     fn worktree(&self, task_id: TaskId) -> Option<PathBuf>;
+
+    /// The branch a task's work is on. `None` when it never got a worktree.
+    fn branch(&self, task_id: TaskId) -> Option<String>;
+
+    /// Merges the given branches into one tree and runs the project's tests there.
+    ///
+    /// The last gate before a run may call itself complete. Every task passing alone says
+    /// nothing about whether the branches work together, and that gap is exactly where a
+    /// multi-agent run fails in a way no per-task check can see.
+    async fn integrate(
+        &self,
+        contributions: &[Contribution],
+        test_command: &str,
+        timeout: std::time::Duration,
+    ) -> IntegrationOutcome;
 }
 
 /// Renders the brief a worker receives.
@@ -102,6 +118,9 @@ pub struct FakeWorkspaces {
     dispatched: parking_lot::Mutex<Vec<DispatchRequest>>,
     worktrees: parking_lot::Mutex<std::collections::HashMap<TaskId, PathBuf>>,
     fail_next: parking_lot::Mutex<bool>,
+    /// What the next integration should return. Scripted, because a fake has no branches to
+    /// merge and the driver's behaviour on each outcome is the thing under test.
+    integration: parking_lot::Mutex<Option<IntegrationOutcome>>,
 }
 
 impl FakeWorkspaces {
@@ -113,7 +132,12 @@ impl FakeWorkspaces {
             dispatched: parking_lot::Mutex::new(Vec::new()),
             worktrees: parking_lot::Mutex::new(Default::default()),
             fail_next: parking_lot::Mutex::new(false),
+            integration: parking_lot::Mutex::new(None),
         }
+    }
+
+    pub fn set_integration(&self, outcome: IntegrationOutcome) {
+        *self.integration.lock() = Some(outcome);
     }
 
     pub fn fail_next_dispatch(&self) {
@@ -158,6 +182,29 @@ impl Workspaces for FakeWorkspaces {
 
     fn worktree(&self, task_id: TaskId) -> Option<PathBuf> {
         self.worktrees.lock().get(&task_id).cloned()
+    }
+
+    fn branch(&self, task_id: TaskId) -> Option<String> {
+        self.worktrees
+            .lock()
+            .contains_key(&task_id)
+            .then(|| format!("agentdeck/task-{}", &task_id.to_string()[..8]))
+    }
+
+    async fn integrate(
+        &self,
+        contributions: &[Contribution],
+        _test_command: &str,
+        _timeout: std::time::Duration,
+    ) -> IntegrationOutcome {
+        // Defaults to success, so tests that are not about integration are unaffected by its
+        // existence. A test that cares scripts the outcome it wants.
+        self.integration
+            .lock()
+            .clone()
+            .unwrap_or_else(|| IntegrationOutcome::Integrated {
+                merged: contributions.iter().map(|c| c.branch.clone()).collect(),
+            })
     }
 }
 

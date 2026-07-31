@@ -233,6 +233,35 @@ impl Workspaces for LiveWorkspaces {
     fn worktree(&self, task_id: TaskId) -> Option<PathBuf> {
         self.registry.get(task_id).map(|w| w.worktree.path.clone())
     }
+
+    fn branch(&self, task_id: TaskId) -> Option<String> {
+        self.registry
+            .get(task_id)
+            .map(|w| w.worktree.branch.clone())
+    }
+
+    async fn integrate(
+        &self,
+        contributions: &[deck_core::git::Contribution],
+        test_command: &str,
+        timeout: std::time::Duration,
+    ) -> deck_core::git::IntegrationOutcome {
+        self.registry
+            .worktrees()
+            .integrate(
+                self.registry.repo(),
+                &self.base_ref,
+                contributions,
+                test_command,
+                timeout,
+            )
+            .await
+            // An integration that could not run is not a verdict on the work. Reporting it as a
+            // failure would blame the agents for an environment problem.
+            .unwrap_or_else(|e| deck_core::git::IntegrationOutcome::Inconclusive {
+                reason: e.to_string(),
+            })
+    }
 }
 
 /// Consults Claude via a one-shot CLI invocation per decision.

@@ -62,6 +62,18 @@ impl EventBus {
         (bus, durable_rx)
     }
 
+    /// Continues numbering from where a previous launch stopped.
+    ///
+    /// Must be called before anything publishes. Without it the counter restarts at 1 on every
+    /// launch, every insert collides with a row the last launch wrote, and the durable log — the
+    /// thing the whole design leans on being complete — silently stops recording anything.
+    ///
+    /// Silently, because the writer logs and continues rather than crashing, which is right for
+    /// one bad row and catastrophic for every row.
+    pub fn resume_from(&self, last: Seq) {
+        self.seq.fetch_max(last.0, Ordering::SeqCst);
+    }
+
     pub fn next_seq(&self) -> Seq {
         Seq(self.seq.fetch_add(1, Ordering::SeqCst) + 1)
     }

@@ -39,6 +39,8 @@ pub fn run() {
             events::get_startup_recovery,
             events::get_resumable_sessions,
             events::resume_session,
+            events::approve_dispatch,
+            events::force_kill_agent,
         ])
         .setup(|app| {
             background::install_tray(app.handle())?;

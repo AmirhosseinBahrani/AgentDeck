@@ -66,6 +66,26 @@ impl LiveWorkspaces {
         }
     }
 
+    /// Force-kills one agent.
+    ///
+    /// Force rather than a cooperative stop, and deliberately not routed through the session
+    /// actor: the case that most needs killing is an agent whose actor is stuck, so a path that
+    /// depended on the actor answering would fail exactly when it is needed.
+    ///
+    /// The worktree, its branch and everything already persisted survive. Killing is an operator
+    /// decision, not an agent fault, so the task is cancelled rather than failed — which is what
+    /// stops it consuming a retry and being reassigned moments later.
+    pub fn kill_task(&self, task_id: TaskId) -> bool {
+        let Some(handle) = self.sessions.get(&task_id) else {
+            return false;
+        };
+        let killed = handle.kill_now().is_ok();
+        drop(handle);
+        // After the kill, so a dying agent's final report still has somewhere to land.
+        self.report_servers.remove(&task_id);
+        killed
+    }
+
     /// Force-kills every running agent and reports how many were stopped.
     ///
     /// Force rather than a cooperative stop: a wedged agent may never answer, and an operator
@@ -342,6 +362,17 @@ pub struct ClaimQueue(pub SharedClaims);
 
 impl deck_supervisor::workspaces::ReportQueue for ClaimQueue {
     fn drain(&self) -> Vec<(TaskId, WorkerReport)> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
+/// Dispatch approvals the operator has clicked, waiting for the driver to act on them.
+pub type SharedApprovals = Arc<parking_lot::Mutex<Vec<TaskId>>>;
+
+pub struct GrantedApprovals(pub SharedApprovals);
+
+impl deck_supervisor::autonomy::ApprovalQueue for GrantedApprovals {
+    fn drain(&self) -> Vec<TaskId> {
         std::mem::take(&mut *self.0.lock())
     }
 }

@@ -4,6 +4,7 @@
 //! result only reaches the graph through the validation ladder, and every state change goes
 //! through `deck_core`'s transition table. The driver's own job is sequencing and I/O.
 
+use crate::autonomy::{ApprovalQueue, Autonomy, NoApprovals};
 use crate::contract::{run_gate, validate_and_repair, GateOutcome, TaskContract};
 use crate::decision::*;
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
@@ -12,7 +13,7 @@ use crate::planner::{Decisions, Planner};
 use crate::workspaces::{render_brief, DispatchRequest, NoReports, ReportQueue, Workspaces};
 use deck_core::domain::ids::{AgentId, TaskId};
 use deck_core::domain::task::{apply, TaskEvent, TaskState, TaskStatus};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -36,6 +37,9 @@ pub struct RunConfig {
     pub plan_limits: PlanLimits,
     pub per_call_budget_usd: f64,
     pub verification_timeout: Duration,
+    /// How much the supervisor may do without being asked. Enforced at dispatch, which is where
+    /// a real process gets a real worktree — anywhere earlier and the mode would be advisory.
+    pub autonomy: Autonomy,
 }
 
 impl RunConfig {
@@ -69,6 +73,11 @@ pub struct Run {
     pub sessions: HashMap<TaskId, deck_core::domain::ids::SessionId>,
     /// Tasks whose agent has claimed completion and are awaiting verification.
     pub awaiting_verification: Vec<TaskId>,
+    /// Dispatches a human has approved. Consumed on use, so approving once starts one agent.
+    pub approved: HashSet<TaskId>,
+    /// Tasks that would have started but are waiting on a human. Surfaced so the operator can
+    /// see what their attention is holding up rather than watching an apparently idle run.
+    pub awaiting_approval: Vec<TaskId>,
 }
 
 impl Run {
@@ -83,6 +92,8 @@ impl Run {
             titles: HashMap::new(),
             sessions: HashMap::new(),
             awaiting_verification: Vec::new(),
+            approved: HashSet::new(),
+            awaiting_approval: Vec::new(),
         }
     }
 
@@ -116,6 +127,7 @@ pub struct Driver<'a> {
     pub planner: &'a dyn Planner,
     pub workspaces: &'a dyn Workspaces,
     pub reports: &'a dyn ReportQueue,
+    pub approvals: &'a dyn ApprovalQueue,
 }
 
 impl<'a> Driver<'a> {
@@ -129,6 +141,7 @@ impl<'a> Driver<'a> {
             planner,
             workspaces,
             reports: &NoReports,
+            approvals: &NoApprovals,
         }
     }
 
@@ -136,6 +149,12 @@ impl<'a> Driver<'a> {
     /// what the scripted tests want.
     pub fn with_reports(mut self, reports: &'a dyn ReportQueue) -> Self {
         self.reports = reports;
+        self
+    }
+
+    /// Supplies dispatch approvals from a human. Only consulted in modes that require them.
+    pub fn with_approvals(mut self, approvals: &'a dyn ApprovalQueue) -> Self {
+        self.approvals = approvals;
         self
     }
 
@@ -492,6 +511,12 @@ impl<'a> Driver<'a> {
     // -----------------------------------------------------------------------
 
     async fn stage_dispatch(&self, run: &mut Run) -> Vec<TaskId> {
+        // Approvals granted since the last iteration. Drained here rather than applied on arrival
+        // for the same reason worker reports are: a click lands whenever it lands.
+        for id in self.approvals.drain() {
+            run.approved.insert(id);
+        }
+
         let ready: Vec<TaskId> = run
             .graph
             .tasks()
@@ -499,6 +524,7 @@ impl<'a> Driver<'a> {
             .map(|t| t.id)
             .collect();
 
+        run.awaiting_approval.clear();
         let mut started = Vec::new();
         for id in ready {
             let Some(current) = run.graph.get(id).cloned() else {
@@ -507,6 +533,17 @@ impl<'a> Driver<'a> {
             let Some(agent_id) = current.assignee else {
                 continue;
             };
+
+            // The enforcement point for autonomy, and the only one. Everything upstream is
+            // reasoning; this is where a process gets spawned into a worktree with edit rights,
+            // so a mode that did not stop it here would not be stopping anything.
+            //
+            // `remove` rather than `contains`: an approval authorises one start. Leaving it in
+            // place would silently re-authorise every future retry of the same task.
+            if self.config.autonomy.dispatch_needs_approval() && !run.approved.remove(&id) {
+                run.awaiting_approval.push(id);
+                continue;
+            }
             let contract = run.contracts.get(&id).cloned().unwrap_or_default();
             let role = run.roles.get(&id).cloned().unwrap_or_default();
             let title = run
@@ -596,13 +633,23 @@ impl<'a> Driver<'a> {
                         .map(|o| format!("{}: {}", o.criterion_id, o.detail))
                         .collect();
 
+                    let reason = failed.join("; ");
+                    // A review failure normally sends the task round again. Manual mode does not
+                    // get to do that: its whole claim is that nothing happens twice without a
+                    // human seeing it happen once, and a silent retry is exactly that.
+                    let event = if self.config.autonomy.may_retry() {
+                        TaskEvent::ReviewFailed {
+                            reason: reason.clone(),
+                        }
+                    } else {
+                        run.state.open_escalations += 1;
+                        TaskEvent::Blocked {
+                            reason: reason.clone(),
+                        }
+                    };
+
                     if let Some(current) = run.graph.get(task_id).cloned() {
-                        if let Ok(next) = apply(
-                            &current,
-                            TaskEvent::ReviewFailed {
-                                reason: failed.join("; "),
-                            },
-                        ) {
+                        if let Ok(next) = apply(&current, event) {
                             run.graph.set_state(next);
                         }
                     }
@@ -611,7 +658,7 @@ impl<'a> Driver<'a> {
                         Stage::Verify,
                         "verification_gate",
                         "executable_criteria_failed",
-                        &failed.join("; "),
+                        &reason,
                     );
                 }
                 GateOutcome::Passed {

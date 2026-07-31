@@ -200,7 +200,9 @@ pub async fn start_supervisor_run(
     state: State<'_, AppState>,
     objective: String,
     max_cost_usd: Option<f64>,
+    autonomy: Option<String>,
 ) -> Result<(), String> {
+    use deck_supervisor::autonomy::Autonomy;
     use deck_supervisor::decision::PlanLimits;
     use deck_supervisor::driver::{Driver, Run, RunConfig, TeamMember};
     use deck_supervisor::loop_engine::RunLimits;
@@ -242,6 +244,13 @@ pub async fn start_supervisor_run(
         plan_limits: PlanLimits::default(),
         per_call_budget_usd: 1.0,
         verification_timeout: std::time::Duration::from_secs(600),
+        // Assisted by default. Autonomous has to be chosen, because the operator should not
+        // discover that agents were running unattended by finding out what they did.
+        autonomy: match autonomy.as_deref() {
+            Some("manual") => Autonomy::Manual,
+            Some("autonomous") => Autonomy::Autonomous,
+            _ => Autonomy::Assisted,
+        },
     };
 
     // Bounded: a full channel drops a redundant wake-up rather than backpressuring the event bus.
@@ -294,19 +303,24 @@ pub async fn start_supervisor_run(
 
     let snapshot_slot = state.run_snapshot.clone();
     let objective_for_snapshot = config.objective.clone();
+    let autonomy_for_snapshot = config.autonomy;
 
     let report_queue = crate::supervision::ClaimQueue(claims);
+    let approvals = state.pending_approvals.clone();
+    approvals.lock().clear();
+    let approval_queue = crate::supervision::GrantedApprovals(approvals);
     let app_handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
-        let driver =
-            Driver::new(&config, &planner, workspaces.as_ref()).with_reports(&report_queue);
+        let driver = Driver::new(&config, &planner, workspaces.as_ref())
+            .with_reports(&report_queue)
+            .with_approvals(&approval_queue);
         let mut run = Run::new();
 
         // Published after each iteration rather than polled from the run: polling would let the
         // dashboard render a picture from mid-iteration, where tasks and phase disagree.
         let observe = move |run: &Run| {
-            let snapshot = snapshot_of(&objective_for_snapshot, run);
+            let snapshot = snapshot_of(&objective_for_snapshot, autonomy_for_snapshot, run);
             // The tray is the only surface visible with the window closed, which is the normal
             // way a long run is watched.
             crate::background::update_tray(&app_handle, &snapshot);
@@ -368,6 +382,49 @@ pub async fn get_session_transcript(
     Ok(state
         .session_transcript(&session_id, limit.unwrap_or(2_000))
         .await)
+}
+
+/// Force-kills one agent, leaving the rest of the run alone.
+///
+/// Unconditional and immediate. The agent most in need of killing is the one that has stopped
+/// answering, so this never waits on the session, the control channel, or the supervisor loop.
+///
+/// Nothing is lost: the worktree and its branch survive with their changes, and the task is
+/// cancelled rather than failed, so it does not consume a retry or get reassigned on its own.
+#[tauri::command]
+pub async fn force_kill_agent(state: State<'_, AppState>, task_id: String) -> Result<bool, String> {
+    let id = task_id
+        .parse::<uuid::Uuid>()
+        .map(deck_core::domain::ids::TaskId::from)
+        .map_err(|_| format!("{task_id} is not a task id"))?;
+
+    let live = state.live_run.lock().await.clone();
+    match live {
+        Some(workspaces) => Ok(workspaces.kill_task(id)),
+        None => Ok(false),
+    }
+}
+
+/// Lets a task start.
+///
+/// One approval starts one agent. Deliberately not a standing grant for the task: a retry after
+/// a failure is a new agent doing new work, and in a mode where the operator asked to approve
+/// each start, silently reusing an old approval would not be approval.
+#[tauri::command]
+pub async fn approve_dispatch(state: State<'_, AppState>, task_id: String) -> Result<(), String> {
+    let id = task_id
+        .parse::<uuid::Uuid>()
+        .map(deck_core::domain::ids::TaskId::from)
+        .map_err(|_| format!("{task_id} is not a task id"))?;
+
+    state.pending_approvals.lock().push(id);
+
+    // Wake the loop so the agent starts now rather than at the next tick. Without this an
+    // approval appears to do nothing for a second or two, which reads as a broken button.
+    if let Some(triggers) = state.run_triggers.lock().await.as_ref() {
+        let _ = triggers.try_send(deck_supervisor::loop_engine::Trigger::HumanAnswered);
+    }
+    Ok(())
 }
 
 /// What starting up had to clean up after a previous launch.
@@ -494,6 +551,9 @@ pub struct RunSnapshot {
     pub iteration: u32,
     pub spent_usd: f64,
     pub open_escalations: usize,
+    /// "manual" | "assisted" | "autonomous". Drives what the UI offers, and the accent stripe
+    /// that tells the operator at a glance what agents may do without asking.
+    pub autonomy: String,
     pub tasks: Vec<TaskSummary>,
     pub decisions: Vec<DecisionSummary>,
 }
@@ -508,6 +568,8 @@ pub struct TaskSummary {
     pub review_rounds: u32,
     pub objective_gate: bool,
     pub blocked_reason: Option<String>,
+    /// Assigned and ready, but held because this mode requires a human to start it.
+    pub awaiting_approval: bool,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -529,7 +591,11 @@ pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot,
 }
 
 /// Flattens a run into what the dashboard shows.
-fn snapshot_of(objective: &str, run: &deck_supervisor::driver::Run) -> RunSnapshot {
+fn snapshot_of(
+    objective: &str,
+    autonomy: deck_supervisor::autonomy::Autonomy,
+    run: &deck_supervisor::driver::Run,
+) -> RunSnapshot {
     let tasks = run
         .graph
         .tasks()
@@ -546,6 +612,7 @@ fn snapshot_of(objective: &str, run: &deck_supervisor::driver::Run) -> RunSnapsh
             review_rounds: task.review_rounds,
             objective_gate: task.objective_gate,
             blocked_reason: task.failure_reason.clone(),
+            awaiting_approval: run.awaiting_approval.contains(&task.id),
         })
         .collect();
 
@@ -575,6 +642,7 @@ fn snapshot_of(objective: &str, run: &deck_supervisor::driver::Run) -> RunSnapsh
                 | deck_supervisor::loop_engine::RunPhase::Cancelled
         ),
         objective: objective.to_string(),
+        autonomy: autonomy.as_str().to_string(),
         phase: format!("{:?}", run.state.phase).to_lowercase(),
         iteration: run.state.iteration,
         spent_usd: run.state.spent_usd,

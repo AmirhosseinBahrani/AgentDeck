@@ -35,6 +35,8 @@ fn config(root: PathBuf) -> RunConfig {
         plan_limits: PlanLimits::default(),
         per_call_budget_usd: 1.0,
         verification_timeout: Duration::from_secs(20),
+        // These exercise the pipeline itself, so nothing should be waiting on a human.
+        autonomy: deck_supervisor::autonomy::Autonomy::Autonomous,
     }
 }
 

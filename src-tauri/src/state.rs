@@ -57,6 +57,8 @@ pub struct AppState {
     pub run_snapshot: Arc<Mutex<Option<crate::events::RunSnapshot>>>,
     /// Worker reports awaiting the driver's IngestReports stage.
     pub pending_claims: crate::supervision::SharedClaims,
+    /// Dispatch approvals the operator has granted but the driver has not yet acted on.
+    pub pending_approvals: crate::supervision::SharedApprovals,
     /// Identifies this launch, so agents recorded by a previous one can be told apart from
     /// agents belonging to a second instance running right now.
     pub boot: BootId,
@@ -87,6 +89,16 @@ impl AppState {
         let store = Store::open(Self::database_path())
             .await
             .map_err(|e| format!("could not open the AgentDeck database: {e}"))?;
+
+        // Before anything can publish. A counter that restarted at 1 would collide with every
+        // row the last launch wrote, and since the writer logs and continues rather than
+        // crashing, the durable log would stop recording without anyone noticing.
+        match deck_core::store::events::max_seq(&store).await {
+            Ok(last) => bus.resume_from(last),
+            // Guessing a starting point could overwrite history. Better to leave the log
+            // read-only for this launch than to corrupt what is already in it.
+            Err(e) => return Err(format!("could not read the event log's position: {e}")),
+        }
 
         {
             let store = store.clone();
@@ -141,6 +153,7 @@ impl AppState {
             run_triggers: Arc::new(Mutex::new(None)),
             run_snapshot: Arc::new(Mutex::new(None)),
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            pending_approvals: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,
             identity,
             startup_recovery,

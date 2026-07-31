@@ -55,3 +55,45 @@ pub fn configure_group(cmd: &mut tokio::process::Command) {
 pub fn adopt(child: &tokio::process::Child) -> io::Result<PlatformProcessGroup> {
     PlatformProcessGroup::adopt(child)
 }
+
+/// What became of a group we tried to reap after a crash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reaped {
+    /// It was still running and has been killed.
+    Killed,
+    /// Nothing was there; only the record needed clearing.
+    AlreadyGone,
+}
+
+/// Kills a process group recorded by a previous run of the app.
+///
+/// Adopted by group id rather than by handle, because the handle died with the app that
+/// crashed. On Unix a process group outlives its creator, so agents genuinely keep running and
+/// have to be killed explicitly. On Windows the Job Object is destroyed with the app and
+/// `KILL_ON_JOB_CLOSE` has already taken the tree down, so there is nothing left to reap.
+pub fn reap_orphan_group(pgid: u32) -> io::Result<Reaped> {
+    #[cfg(unix)]
+    {
+        unix::reap_orphan_group(pgid)
+    }
+    #[cfg(windows)]
+    {
+        let _ = pgid;
+        Ok(Reaped::AlreadyGone)
+    }
+}
+
+/// True while the process is alive. Used to decide whether a recorded owner is still around.
+pub fn pid_is_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        unix::pid_is_alive(pid)
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        // Conservative: an owner we cannot probe is treated as live, so a second instance
+        // never reaps the first instance's agents.
+        true
+    }
+}

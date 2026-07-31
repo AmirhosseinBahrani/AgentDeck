@@ -196,6 +196,7 @@ pub async fn pending_permission_count(state: State<'_, AppState>) -> Result<usiz
 /// through the event stream, which is already how everything else is observed.
 #[tauri::command]
 pub async fn start_supervisor_run(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     objective: String,
     max_cost_usd: Option<f64>,
@@ -209,16 +210,25 @@ pub async fn start_supervisor_run(
 
     // The three seeded roles. Team configuration arrives with the project model; hard-coding them
     // here keeps this honest about what exists rather than pretending to read config.
-    let team = vec![
-        TeamMember {
-            agent_id: deck_core::domain::ids::AgentId::new(),
-            role: "developer".into(),
-        },
-        TeamMember {
-            agent_id: deck_core::domain::ids::AgentId::new(),
-            role: "reviewer".into(),
-        },
-    ];
+    //
+    // Registered rather than freshly minted each run: an agent id that changed on every launch
+    // would scatter one agent's history across a new row per run, and nothing downstream could
+    // answer "what has the reviewer done".
+    let mut team = Vec::new();
+    for role in ["developer", "reviewer"] {
+        let agent_id = deck_core::store::identity::ensure_agent(
+            &state.store,
+            &state.identity,
+            deck_core::domain::ids::AgentId::new(),
+            role,
+        )
+        .await
+        .map_err(|e| format!("could not register the {role}: {e}"))?;
+        team.push(TeamMember {
+            agent_id,
+            role: role.into(),
+        });
+    }
 
     let config = RunConfig {
         objective,
@@ -255,6 +265,9 @@ pub async fn start_supervisor_run(
         state.bus.clone(),
         "main".into(),
         sink,
+        state.store.clone(),
+        state.boot.clone(),
+        state.identity.clone(),
     ));
     let planner = crate::supervision::CliPlanner::new(repo);
 
@@ -283,6 +296,7 @@ pub async fn start_supervisor_run(
     let objective_for_snapshot = config.objective.clone();
 
     let report_queue = crate::supervision::ClaimQueue(claims);
+    let app_handle = app.clone();
 
     tauri::async_runtime::spawn(async move {
         let driver =
@@ -293,6 +307,9 @@ pub async fn start_supervisor_run(
         // dashboard render a picture from mid-iteration, where tasks and phase disagree.
         let observe = move |run: &Run| {
             let snapshot = snapshot_of(&objective_for_snapshot, run);
+            // The tray is the only surface visible with the window closed, which is the normal
+            // way a long run is watched.
+            crate::background::update_tray(&app_handle, &snapshot);
             let slot = snapshot_slot.clone();
             tauri::async_runtime::spawn(async move {
                 *slot.lock().await = Some(snapshot);
@@ -308,6 +325,9 @@ pub async fn start_supervisor_run(
             iterations = run.state.iteration,
             "supervisor run ended"
         );
+        // A run that finishes while the operator is elsewhere is the case this exists for: they
+        // started it precisely so they could stop watching.
+        crate::background::notify_run_ended(&app, &exit, run.state.spent_usd);
     });
 
     Ok(())
@@ -348,6 +368,117 @@ pub async fn get_session_transcript(
     Ok(state
         .session_transcript(&session_id, limit.unwrap_or(2_000))
         .await)
+}
+
+/// What starting up had to clean up after a previous launch.
+///
+/// Surfaced rather than logged: an operator who force-quit the app mid-run needs to know their
+/// agents were killed and which sessions survived, or they will assume work is still in flight.
+#[tauri::command]
+pub async fn get_startup_recovery(
+    state: State<'_, AppState>,
+) -> Result<crate::state::RecoveryReport, String> {
+    Ok(state.startup_recovery.clone())
+}
+
+/// Sessions a crash interrupted, each with the directory they must be resumed from.
+#[derive(serde::Serialize)]
+pub struct ResumableSummary {
+    pub session_id: String,
+    pub task_id: Option<String>,
+    pub cwd: String,
+    pub status: String,
+    /// False once the worktree is gone, which makes the conversation permanently unreachable.
+    /// Shown up front rather than discovered when a resume fails.
+    pub resumable: bool,
+}
+
+#[tauri::command]
+pub async fn get_resumable_sessions(
+    state: State<'_, AppState>,
+) -> Result<Vec<ResumableSummary>, String> {
+    Ok(state
+        .resumable_sessions()
+        .await
+        .into_iter()
+        .map(|s| ResumableSummary {
+            session_id: s.session_id.to_string(),
+            task_id: s.task_id.map(|t| t.to_string()),
+            cwd: s.cwd.display().to_string(),
+            status: s.status,
+            resumable: s.cwd_exists,
+        })
+        .collect())
+}
+
+/// Reopens an interrupted session in the directory it originally ran in.
+///
+/// The directory is not a convenience here: Claude buckets conversations by working directory,
+/// so resuming from anywhere else fails outright with "no conversation found". That is why the
+/// recorded cwd is used verbatim and a missing one is refused rather than substituted.
+#[tauri::command]
+pub async fn resume_session(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<String, String> {
+    use deck_core::permission::{worker_defaults, EffectivePolicy, PermissionBroker};
+    use deck_core::runtime::claude_code::actor::{spawn_session, SpawnOptions};
+    use deck_core::runtime::claude_code::argv::{PermissionMode, SessionConfig};
+
+    let target = session_id
+        .parse::<uuid::Uuid>()
+        .map(SessionId::from)
+        .map_err(|_| format!("{session_id} is not a session id"))?;
+
+    let session = state
+        .resumable_sessions()
+        .await
+        .into_iter()
+        .find(|s| s.session_id == target)
+        .ok_or_else(|| "that session is not resumable".to_string())?;
+
+    if !session.cwd_exists {
+        return Err(format!(
+            "the worktree this session ran in is gone ({}), so its conversation cannot be \
+             reopened",
+            session.cwd.display()
+        ));
+    }
+
+    let mut config = SessionConfig::new(SessionId::new(), session.cwd.clone());
+    // --resume replaces --session-id rather than accompanying it, so the id above is discarded
+    // by argv building; the resumed conversation keeps its original identity.
+    config.resume = Some(target);
+    config.permission_mode = PermissionMode::AcceptEdits;
+    config.tools = vec![
+        "Read".into(),
+        "Write".into(),
+        "Edit".into(),
+        "Glob".into(),
+        "Grep".into(),
+        "Bash".into(),
+    ];
+
+    // Containment is re-derived from the worktree rather than restored from the old session:
+    // policy must reflect what is allowed now, not what was allowed when the session started.
+    let policy = EffectivePolicy::resolve(
+        session.cwd.canonicalize().unwrap_or(session.cwd.clone()),
+        &[worker_defaults()],
+    );
+
+    let mut opts = SpawnOptions::new(config);
+    opts.broker = Some(std::sync::Arc::new(PermissionBroker::new(policy)));
+    opts.attribution = deck_core::bus::Attribution {
+        session_id: Some(target),
+        agent_id: None,
+        task_id: session.task_id,
+    };
+
+    let (handle, _join) = spawn_session(opts, state.bus.clone())
+        .await
+        .map_err(|e| format!("could not reopen the session: {e}"))?;
+
+    Ok(handle.session_id.to_string())
 }
 
 /// A snapshot of the current run for the dashboard.

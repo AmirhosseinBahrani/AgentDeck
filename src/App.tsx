@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
+import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
 import { TeamView } from "./features/team/TeamView";
 import { TranscriptView } from "./features/sessions/TranscriptView";
 import {
@@ -76,6 +77,10 @@ export default function App() {
       {/* Outside the router and the session panel: an agent can block while the operator is
           looking elsewhere, and a prompt buried in a hidden transcript would time out unseen. */}
       <EscalationLayer />
+
+      {/* Above the view switch: what a crash left behind is true of the whole app, not of
+          whichever surface happens to be open. */}
+      <RecoveryBanner />
 
       {view === "team" ? (
         <div className="min-h-0 flex-1">

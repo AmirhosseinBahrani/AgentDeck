@@ -53,6 +53,8 @@ pub struct AppState {
         Arc<Mutex<Option<tokio::sync::mpsc::Sender<deck_supervisor::loop_engine::Trigger>>>>,
     /// Latest dashboard snapshot, refreshed by the loop after each iteration.
     pub run_snapshot: Arc<Mutex<Option<crate::events::RunSnapshot>>>,
+    /// Worker reports awaiting the driver's IngestReports stage.
+    pub pending_claims: crate::supervision::SharedClaims,
 }
 
 impl AppState {
@@ -111,6 +113,7 @@ impl AppState {
             live_run: Arc::new(Mutex::new(None)),
             run_triggers: Arc::new(Mutex::new(None)),
             run_snapshot: Arc::new(Mutex::new(None)),
+            pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
         })
     }
 

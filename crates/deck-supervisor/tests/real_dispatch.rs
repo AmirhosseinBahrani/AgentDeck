@@ -311,3 +311,165 @@ async fn the_dispatched_brief_carries_the_task_title_and_contract() {
         assert_eq!(request.agent_role, "developer");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Worker reports
+// ---------------------------------------------------------------------------
+
+use deck_core::reporting::WorkerReport;
+use deck_supervisor::workspaces::ReportQueue;
+
+/// A queue a test can load with reports.
+struct Queued(parking_lot::Mutex<Vec<(deck_core::domain::ids::TaskId, WorkerReport)>>);
+
+impl Queued {
+    fn new() -> Self {
+        Self(parking_lot::Mutex::new(Vec::new()))
+    }
+    fn push(&self, task: deck_core::domain::ids::TaskId, report: WorkerReport) {
+        self.0.lock().push((task, report));
+    }
+}
+
+impl ReportQueue for Queued {
+    fn drain(&self) -> Vec<(deck_core::domain::ids::TaskId, WorkerReport)> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
+#[tokio::test]
+async fn a_worker_claim_queues_the_task_for_verification_rather_than_completing_it() {
+    // The claim is the agent's assertion; the gate is what decides. If a claim completed a task
+    // directly, the whole verification design would be bypassed by one tool call.
+    let root = workdir("claim");
+    let cfg = config(root.clone());
+    let planner = ScriptedPlanner::new();
+    planner.push(two_task_plan(), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let reports = Queued::new();
+
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_reports(&reports);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task_id = dispatched[0];
+
+    reports.push(
+        task_id,
+        WorkerReport::ClaimTaskDone {
+            summary: "finished".into(),
+        },
+    );
+
+    // The agent did not actually create its marker, so verification must reject the claim.
+    driver.step(&mut run, true).await;
+
+    assert_ne!(
+        run.graph.get(task_id).unwrap().status,
+        TaskStatus::Completed,
+        "a claim must not complete a task whose criteria fail"
+    );
+}
+
+#[tokio::test]
+async fn a_claim_from_a_task_that_is_not_running_is_recorded_as_a_violation() {
+    // Most likely a duplicate claim or an agent outliving its task. Silently accepting it would
+    // let a stale process complete work twice.
+    let root = workdir("dupclaim");
+    let cfg = config(root.clone());
+    let planner = ScriptedPlanner::new();
+    planner.push(two_task_plan(), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let reports = Queued::new();
+
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_reports(&reports);
+    let mut run = Run::new();
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task_id = dispatched[0];
+
+    // Two claims for the same task; the second arrives when it is already in review.
+    for _ in 0..2 {
+        reports.push(
+            task_id,
+            WorkerReport::ClaimTaskDone {
+                summary: "done".into(),
+            },
+        );
+    }
+    driver.step(&mut run, true).await;
+
+    let rejected = run.log.decisions.iter().any(|d| d.kind == "claim_rejected");
+    assert!(rejected, "the duplicate claim should be logged as rejected");
+}
+
+#[tokio::test]
+async fn a_raised_blocker_blocks_the_task_and_asks_for_a_human() {
+    let root = workdir("blocker");
+    let cfg = config(root.clone());
+    let planner = ScriptedPlanner::new();
+    planner.push(two_task_plan(), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let reports = Queued::new();
+
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_reports(&reports);
+    let mut run = Run::new();
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task_id = dispatched[0];
+
+    reports.push(
+        task_id,
+        WorkerReport::RaiseBlocker {
+            reason: "the API contract is undefined".into(),
+        },
+    );
+    driver.step(&mut run, true).await;
+
+    assert_eq!(run.graph.get(task_id).unwrap().status, TaskStatus::Blocked);
+    assert!(run.state.open_escalations > 0, "a human should be asked");
+}
+
+#[tokio::test]
+async fn progress_is_recorded_but_does_not_move_the_task() {
+    // Progress is advisory. Acting on it would let a worker talk its way forward without evidence.
+    let root = workdir("progress");
+    let cfg = config(root.clone());
+    let planner = ScriptedPlanner::new();
+    planner.push(two_task_plan(), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let reports = Queued::new();
+
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_reports(&reports);
+    let mut run = Run::new();
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task_id = dispatched[0];
+
+    reports.push(
+        task_id,
+        WorkerReport::ReportProgress {
+            summary: "halfway there".into(),
+            completed_work: vec!["handler".into()],
+            remaining_work: vec!["tests".into()],
+            blockers: vec![],
+        },
+    );
+    driver.step(&mut run, true).await;
+
+    assert_eq!(
+        run.graph.get(task_id).unwrap().status,
+        TaskStatus::Running,
+        "progress must not advance the task"
+    );
+    assert!(run
+        .log
+        .decisions
+        .iter()
+        .any(|d| d.kind == "report_progress" && d.rationale.contains("halfway")));
+}

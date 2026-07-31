@@ -234,17 +234,29 @@ pub async fn start_supervisor_run(
         verification_timeout: std::time::Duration::from_secs(600),
     };
 
-    let workspaces = std::sync::Arc::new(crate::supervision::LiveWorkspaces::new(
-        state.workspaces.clone(),
-        state.bus.clone(),
-        "main".into(),
-    ));
-    let planner = crate::supervision::CliPlanner::new(repo);
-
     // Bounded: a full channel drops a redundant wake-up rather than backpressuring the event bus.
     // Losing one is safe because the tick picks the work up; stalling the bus would slow every
     // agent.
     let (triggers, trigger_rx) = tokio::sync::mpsc::channel(64);
+
+    // Worker reports land here and are drained by the loop. A queue rather than direct mutation:
+    // reports arrive from agent processes at arbitrary moments, and applying them mid-iteration
+    // would mutate the graph underneath a stage that is reading it.
+    let claims = state.pending_claims.clone();
+    claims.lock().clear();
+
+    let sink = std::sync::Arc::new(crate::supervision::SupervisorSink::new(
+        claims.clone(),
+        triggers.clone(),
+    ));
+
+    let workspaces = std::sync::Arc::new(crate::supervision::LiveWorkspaces::new(
+        state.workspaces.clone(),
+        state.bus.clone(),
+        "main".into(),
+        sink,
+    ));
+    let planner = crate::supervision::CliPlanner::new(repo);
 
     // Agent activity wakes the loop. Without this the run would only advance on the tick, which
     // would add up to a minute of latency to every handoff.
@@ -270,8 +282,11 @@ pub async fn start_supervisor_run(
     let snapshot_slot = state.run_snapshot.clone();
     let objective_for_snapshot = config.objective.clone();
 
+    let report_queue = crate::supervision::ClaimQueue(claims);
+
     tauri::async_runtime::spawn(async move {
-        let driver = Driver::new(&config, &planner, workspaces.as_ref());
+        let driver =
+            Driver::new(&config, &planner, workspaces.as_ref()).with_reports(&report_queue);
         let mut run = Run::new();
 
         // Published after each iteration rather than polled from the run: polling would let the

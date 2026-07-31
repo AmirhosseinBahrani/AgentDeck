@@ -160,3 +160,31 @@ impl Workspaces for FakeWorkspaces {
         self.worktrees.lock().get(&task_id).cloned()
     }
 }
+
+/// Worker reports waiting to be applied.
+///
+/// Drained by the driver at the `IngestReports` stage rather than applied as they arrive. Reports
+/// come from agent processes at arbitrary moments, and mutating the graph mid-stage would change
+/// it underneath code that is reading it.
+pub trait ReportQueue: Send + Sync {
+    fn drain(
+        &self,
+    ) -> Vec<(
+        deck_core::domain::ids::TaskId,
+        deck_core::reporting::WorkerReport,
+    )>;
+}
+
+/// A queue that never yields anything, for runs with no live agents.
+pub struct NoReports;
+
+impl ReportQueue for NoReports {
+    fn drain(
+        &self,
+    ) -> Vec<(
+        deck_core::domain::ids::TaskId,
+        deck_core::reporting::WorkerReport,
+    )> {
+        Vec::new()
+    }
+}

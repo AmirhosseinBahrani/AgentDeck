@@ -182,7 +182,10 @@ mod tests {
     #[test]
     fn permission_interception_maps_to_stdio_prompt_tool() {
         let v = argv_of(&base());
-        let i = v.iter().position(|s| s == "--permission-prompt-tool").unwrap();
+        let i = v
+            .iter()
+            .position(|s| s == "--permission-prompt-tool")
+            .unwrap();
         assert_eq!(v[i + 1], "stdio");
     }
 

@@ -48,7 +48,10 @@ impl Translator {
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                             .to_string(),
-                        model: rest.get("model").and_then(Value::as_str).map(str::to_string),
+                        model: rest
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
                         tools: rest
                             .get("tools")
                             .and_then(Value::as_array)
@@ -90,10 +93,7 @@ impl Translator {
                     Some("tool_result") => Some(AgentEvent::ToolResult {
                         tool_use_id: str_at(b, "tool_use_id"),
                         output: b.get("content").cloned().unwrap_or(Value::Null),
-                        is_error: b
-                            .get("is_error")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false),
+                        is_error: b.get("is_error").and_then(Value::as_bool).unwrap_or(false),
                     }),
                     _ => None,
                 })

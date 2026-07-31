@@ -100,6 +100,8 @@ export interface RunSnapshot {
   spent_usd: number;
   open_escalations: number;
   autonomy: Autonomy;
+  /** Whether the branches have been merged and tested together. */
+  integrated: boolean;
   tasks: TaskSummary[];
   decisions: DecisionSummary[];
 }

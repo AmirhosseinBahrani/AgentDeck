@@ -252,3 +252,119 @@ async fn an_assisted_run_still_retries_a_failure_on_its_own() {
         "assisted mode should still be willing to try again"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The integration gate — what the run does with each outcome
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_run_is_not_complete_until_the_branches_integrate() {
+    // Every task green in its own worktree is not the same as the work combining. Declaring
+    // completion here would hand the operator a green dashboard and an unmerged pile of
+    // branches, which is the failure the gate exists to prevent.
+    use deck_supervisor::loop_engine::RunPhase;
+
+    let root = workdir("integrates");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    claim_done(&mut run, dispatched[0]);
+
+    // Verification and integration happen in the same pass, because CompletionCheck sits after
+    // Verify in the pipeline. Nothing waits an extra iteration to learn that the branches merge.
+    driver.step(&mut run, true).await;
+    assert_eq!(
+        run.graph.get(dispatched[0]).unwrap().status,
+        TaskStatus::Completed
+    );
+    assert!(run.state.integrated, "the gate runs in the same iteration");
+
+    // Only now may the sweep call the run complete.
+    assert!(matches!(
+        driver.step(&mut run, true).await,
+        IterationOutcome::Terminal(RunPhase::Completed)
+    ));
+}
+
+#[tokio::test]
+async fn a_merge_conflict_stops_the_run_and_asks_a_human() {
+    // A conflict means two agents were given overlapping work. Resolving it would mean choosing
+    // whose work to discard, which is not a decision code or a model should make silently.
+    use deck_core::git::IntegrationOutcome;
+    use deck_supervisor::loop_engine::RunPhase;
+
+    let root = workdir("conflict");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    workspaces.set_integration(IntegrationOutcome::Conflicted {
+        branch: "agentdeck/task-abc".into(),
+        task_id: "abc".into(),
+        files: vec!["src/lib.rs".into()],
+    });
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    claim_done(&mut run, dispatched[0]);
+    driver.step(&mut run, true).await;
+    driver.step(&mut run, true).await;
+
+    assert!(!run.state.integrated);
+    assert_eq!(run.state.phase, RunPhase::BlockedOnHuman);
+    assert!(run.state.open_escalations > 0);
+    assert!(
+        run.log
+            .decisions
+            .iter()
+            .any(|d| d.kind == "integration_conflict" && d.rationale.contains("src/lib.rs")),
+        "the operator needs to be told which file clashed"
+    );
+}
+
+#[tokio::test]
+async fn branches_that_merge_but_break_together_block_rather_than_blaming_a_task() {
+    // No individual task is at fault — each one passed. Reopening one would send an agent to
+    // fix code that is correct on its own.
+    use deck_core::git::IntegrationOutcome;
+    use deck_supervisor::loop_engine::RunPhase;
+
+    let root = workdir("broken-combo");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    workspaces.set_integration(IntegrationOutcome::TestsFailed {
+        output: "3 tests failed after merging".into(),
+    });
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task = dispatched[0];
+    claim_done(&mut run, task);
+    driver.step(&mut run, true).await;
+    driver.step(&mut run, true).await;
+
+    assert_eq!(run.state.phase, RunPhase::BlockedOnHuman);
+    assert_eq!(
+        run.graph.get(task).unwrap().status,
+        TaskStatus::Completed,
+        "the task itself passed and must not be reopened"
+    );
+}

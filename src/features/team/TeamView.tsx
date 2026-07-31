@@ -163,6 +163,11 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
       <footer className="flex h-7 shrink-0 items-center gap-4 border-t border-neutral-800 px-4 text-[10px] text-neutral-600">
         <span>Iteration {snapshot?.iteration ?? 0}</span>
         <span>${(snapshot?.spent_usd ?? 0).toFixed(4)} spent</span>
+        {/* Stated explicitly, because all-green tasks look like a finished run and are not one
+            until the branches have been merged and tested together. */}
+        <span className={snapshot?.integrated ? "text-emerald-500" : undefined}>
+          {snapshot?.integrated ? "branches integrate" : "not yet integrated"}
+        </span>
         <span className={snapshot?.open_escalations ? "text-amber-400" : undefined}>
           {snapshot?.open_escalations ?? 0} awaiting you
         </span>

@@ -554,6 +554,9 @@ pub struct RunSnapshot {
     /// "manual" | "assisted" | "autonomous". Drives what the UI offers, and the accent stripe
     /// that tells the operator at a glance what agents may do without asking.
     pub autonomy: String,
+    /// Whether the branches have been merged and tested together. A run is not finished without
+    /// it, so the dashboard says so rather than showing all-green tasks and nothing else.
+    pub integrated: bool,
     pub tasks: Vec<TaskSummary>,
     pub decisions: Vec<DecisionSummary>,
 }
@@ -643,6 +646,7 @@ fn snapshot_of(
         ),
         objective: objective.to_string(),
         autonomy: autonomy.as_str().to_string(),
+        integrated: run.state.integrated,
         phase: format!("{:?}", run.state.phase).to_lowercase(),
         iteration: run.state.iteration,
         spent_usd: run.state.spent_usd,

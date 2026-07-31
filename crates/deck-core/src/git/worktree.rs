@@ -59,6 +59,11 @@ impl WorktreeManager {
     /// Creates the worktree for a task, or returns the existing one.
     ///
     /// Idempotent so a retry or a crash-recovery pass does not fail on an already-created tree.
+    /// The lock guarding one repository's git commands, so sibling modules can hold it too.
+    pub(crate) fn locks_for(&self, root: &Path) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        self.locks.for_repo(root)
+    }
+
     pub async fn ensure(&self, repo: &Path, spec: &WorktreeSpec) -> Result<WorktreeInfo> {
         let root = repo_root(repo).await?;
         let lock = self.locks.for_repo(&root);

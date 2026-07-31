@@ -116,6 +116,12 @@ pub struct RunState {
     /// cumulatively.
     pub spent_usd: f64,
     pub open_escalations: usize,
+    /// Whether every completed branch has been merged and tested together.
+    ///
+    /// On the run state rather than beside it because the sweep is what declares a run complete,
+    /// and a completion predicate that could not see this would declare success over a set of
+    /// branches nobody had ever combined.
+    pub integrated: bool,
 }
 
 impl Default for RunState {
@@ -126,6 +132,7 @@ impl Default for RunState {
             replans: 0,
             spent_usd: 0.0,
             open_escalations: 0,
+            integrated: false,
         }
     }
 }
@@ -201,10 +208,21 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
     }
 
     if graph.objective_satisfied() {
-        notes.push("every objective-gating task is complete".into());
+        // Complete only once the branches have been merged and tested together. Every task
+        // passing alone says nothing about whether they combine, and declaring success here
+        // would hand the operator a green dashboard and an unresolved merge.
+        if state.integrated {
+            notes.push("every objective-gating task is complete and the branches integrate".into());
+            return SweepOutcome {
+                should_iterate: false,
+                terminal: Some(RunPhase::Completed),
+                notes,
+            };
+        }
+        notes.push("every objective-gating task is complete; integrating the branches".into());
         return SweepOutcome {
-            should_iterate: false,
-            terminal: Some(RunPhase::Completed),
+            should_iterate: true,
+            terminal: None,
             notes,
         };
     }

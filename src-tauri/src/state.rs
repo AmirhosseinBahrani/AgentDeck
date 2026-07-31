@@ -46,6 +46,8 @@ pub struct AppState {
     /// Serves the fixture-replay demo only, which has no worktree of its own. Real agents never
     /// use it. It disappears once agents are launched from the UI in M4.
     pub demo_broker: Arc<PermissionBroker>,
+    /// The agents of the current run, so the operator can stop them. `None` when no run is active.
+    pub live_run: Arc<Mutex<Option<Arc<crate::supervision::LiveWorkspaces>>>>,
 }
 
 impl AppState {
@@ -100,6 +102,7 @@ impl AppState {
             watched: Arc::new(Mutex::new(Vec::new())),
             workspaces,
             demo_broker,
+            live_run: Arc::new(Mutex::new(None)),
         }
     }
 

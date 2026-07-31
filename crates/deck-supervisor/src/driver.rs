@@ -9,6 +9,7 @@ use crate::decision::*;
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
 use crate::loop_engine::*;
 use crate::planner::{Decisions, Planner};
+use crate::workspaces::{render_brief, DispatchRequest, Workspaces};
 use deck_core::domain::ids::{AgentId, TaskId};
 use deck_core::domain::task::{apply, TaskEvent, TaskState, TaskStatus};
 use std::collections::HashMap;
@@ -28,8 +29,8 @@ pub struct RunConfig {
     pub team: Vec<TeamMember>,
     /// Injected into any contract that arrives without executable verification.
     pub default_test_command: String,
-    /// Where verification runs. In production this is the task's worktree; a single path here
-    /// keeps the driver testable without creating worktrees.
+    /// Fallback verification directory, used only for a task with no worktree — which should not
+    /// happen once dispatch has run, and is treated as inconclusive rather than failed.
     pub verification_root: PathBuf,
     pub limits: RunLimits,
     pub plan_limits: PlanLimits,
@@ -63,6 +64,9 @@ pub struct Run {
     /// Contract and role per task, kept beside the graph because the graph stores lifecycle only.
     pub contracts: HashMap<TaskId, TaskContract>,
     pub roles: HashMap<TaskId, String>,
+    pub titles: HashMap<TaskId, String>,
+    /// Live session per dispatched task, so the app can attach a transcript view or kill it.
+    pub sessions: HashMap<TaskId, deck_core::domain::ids::SessionId>,
     /// Tasks whose agent has claimed completion and are awaiting verification.
     pub awaiting_verification: Vec<TaskId>,
 }
@@ -76,6 +80,8 @@ impl Run {
             receipts: StageReceipts::new(),
             contracts: HashMap::new(),
             roles: HashMap::new(),
+            titles: HashMap::new(),
+            sessions: HashMap::new(),
             awaiting_verification: Vec::new(),
         }
     }
@@ -108,11 +114,20 @@ pub enum IterationOutcome {
 pub struct Driver<'a> {
     pub config: &'a RunConfig,
     pub planner: &'a dyn Planner,
+    pub workspaces: &'a dyn Workspaces,
 }
 
 impl<'a> Driver<'a> {
-    pub fn new(config: &'a RunConfig, planner: &'a dyn Planner) -> Self {
-        Self { config, planner }
+    pub fn new(
+        config: &'a RunConfig,
+        planner: &'a dyn Planner,
+        workspaces: &'a dyn Workspaces,
+    ) -> Self {
+        Self {
+            config,
+            planner,
+            workspaces,
+        }
     }
 
     /// Runs one iteration if the sweep says it is warranted.
@@ -150,7 +165,7 @@ impl<'a> Driver<'a> {
             match stage {
                 Stage::Plan if run.graph.is_empty() => self.stage_plan(run).await,
                 Stage::Assign => self.stage_assign(run).await,
-                Stage::Dispatch => dispatched = self.stage_dispatch(run),
+                Stage::Dispatch => dispatched = self.stage_dispatch(run).await,
                 Stage::Verify => self.stage_verify(run).await,
                 Stage::Judge => self.stage_judge(run).await,
                 Stage::Commit => {
@@ -252,6 +267,7 @@ impl<'a> Driver<'a> {
             }
             run.contracts.insert(id, contract);
             run.roles.insert(id, proposed.role.clone());
+            run.titles.insert(id, proposed.title.clone());
         }
 
         let edges = plan
@@ -396,7 +412,7 @@ impl<'a> Driver<'a> {
     // Dispatch — pure: reports what should be started, does not spawn
     // -----------------------------------------------------------------------
 
-    fn stage_dispatch(&self, run: &mut Run) -> Vec<TaskId> {
+    async fn stage_dispatch(&self, run: &mut Run) -> Vec<TaskId> {
         let ready: Vec<TaskId> = run
             .graph
             .tasks()
@@ -409,20 +425,61 @@ impl<'a> Driver<'a> {
             let Some(current) = run.graph.get(id).cloned() else {
                 continue;
             };
-            if let Ok(next) = apply(&current, TaskEvent::Started) {
-                run.graph.set_state(next);
-                started.push(id);
-                run.log.record_code_decision(
-                    run.state.iteration,
-                    Stage::Dispatch,
-                    "dispatch",
-                    "assigned_and_ready",
-                    &format!("task {id} dispatched"),
-                );
+            let Some(agent_id) = current.assignee else {
+                continue;
+            };
+            let contract = run.contracts.get(&id).cloned().unwrap_or_default();
+            let role = run.roles.get(&id).cloned().unwrap_or_default();
+            let title = run
+                .titles
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| id.to_string());
+
+            let request = DispatchRequest {
+                task_id: id,
+                agent_id,
+                agent_role: role,
+                task_title: title.clone(),
+                brief: render_brief(&title, &contract),
+                contract,
+            };
+
+            match self.workspaces.dispatch(request).await {
+                Ok(agent) => {
+                    // Only move the task to Running once an agent is genuinely started. Marking it
+                    // Running on intent would consume an attempt for work that never began.
+                    if let Ok(next) = apply(&current, TaskEvent::Started) {
+                        run.graph.set_state(next);
+                        run.sessions.insert(id, agent.session_id);
+                        started.push(id);
+                        run.log.record_code_decision(
+                            run.state.iteration,
+                            Stage::Dispatch,
+                            "dispatch",
+                            "assigned_and_ready",
+                            &format!("task {id} started in {}", agent.worktree.display()),
+                        );
+                    }
+                }
+                Err(e) => {
+                    // A worktree or spawn failure is an environment problem, not the agent's
+                    // fault, so it escalates rather than burning the task's retry budget.
+                    run.state.open_escalations += 1;
+                    run.state.phase = RunPhase::BlockedOnHuman;
+                    run.log.record_code_decision(
+                        run.state.iteration,
+                        Stage::Dispatch,
+                        "dispatch_failed",
+                        "environment",
+                        &e.to_string(),
+                    );
+                    break;
+                }
             }
         }
 
-        if !started.is_empty() {
+        if !started.is_empty() && run.state.phase != RunPhase::BlockedOnHuman {
             run.state.phase = RunPhase::Monitoring;
         }
         started
@@ -440,12 +497,15 @@ impl<'a> Driver<'a> {
                 continue;
             };
 
-            let outcome = run_gate(
-                &self.config.verification_root,
-                &contract,
-                self.config.verification_timeout,
-            )
-            .await;
+            // Each task is verified in the tree its own agent worked in. Verifying in a shared
+            // directory would test the wrong code — and would most likely pass, which is the
+            // dangerous direction.
+            let worktree = self
+                .workspaces
+                .worktree(task_id)
+                .unwrap_or_else(|| self.config.verification_root.clone());
+
+            let outcome = run_gate(&worktree, &contract, self.config.verification_timeout).await;
 
             match outcome {
                 GateOutcome::Failed { outcomes } => {

@@ -13,6 +13,7 @@
 use crate::bus::{Attribution, DeltaChannel, EventBus};
 use crate::domain::event::{AgentEvent, ExitReason};
 use crate::domain::ids::SessionId;
+use crate::permission::broker::{await_resolution, PermissionBroker, Resolution, Verdict};
 use crate::process::{self, PlatformProcessGroup, ProcessGroup};
 use crate::runtime::claude_code::argv::{PermissionMode, SessionConfig};
 use crate::runtime::claude_code::ndjson::{Line, NdjsonReader};
@@ -100,6 +101,9 @@ pub struct SpawnOptions {
     /// How long to wait for the first `system/init`. Configurable so tests can assert the
     /// real startup-failure path without waiting out the production timeout.
     pub startup_timeout: Duration,
+    /// Answers `can_use_tool` requests. Without one, the CLI's own `acceptEdits` handling
+    /// applies and out-of-worktree actions are refused with no chance to approve them.
+    pub broker: Option<Arc<PermissionBroker>>,
 }
 
 impl SpawnOptions {
@@ -110,6 +114,7 @@ impl SpawnOptions {
             attribution: Attribution::default(),
             env: Vec::new(),
             startup_timeout: STARTUP_TIMEOUT,
+            broker: None,
         }
     }
 }
@@ -194,6 +199,8 @@ pub async fn spawn_session(
     let actor = Actor {
         session_id,
         startup_timeout: opts.startup_timeout,
+        broker: opts.broker.clone(),
+        self_tx: cmd_tx.clone(),
         attribution: opts.attribution,
         bus,
         translator: Translator::new(),
@@ -223,6 +230,10 @@ pub async fn spawn_session(
 struct Actor {
     session_id: SessionId,
     startup_timeout: Duration,
+    broker: Option<Arc<PermissionBroker>>,
+    /// The actor's own command channel. Permission answers are posted back through it rather
+    /// than reaching into stdin directly, so all writes stay serialized in one place.
+    self_tx: mpsc::Sender<SessionCmd>,
     attribution: Attribution,
     bus: Arc<EventBus>,
     translator: Translator,
@@ -406,8 +417,91 @@ impl Actor {
             if matches!(event, AgentEvent::SessionReady { .. }) {
                 self.started = true;
             }
+
+            if let AgentEvent::PermissionRequest {
+                ref request_id,
+                ref tool,
+                ref input,
+                ref reason_type,
+                ref blocked_path,
+                ref suggestions,
+            } = event
+            {
+                self.handle_permission_request(
+                    request_id.clone(),
+                    tool.clone(),
+                    input.clone(),
+                    reason_type.clone(),
+                    blocked_path.clone(),
+                    suggestions.clone(),
+                )
+                .await;
+            }
+
             self.emit(event).await;
         }
+    }
+
+    /// Routes a `can_use_tool` request through the broker.
+    ///
+    /// Policy-settled outcomes are answered on the spot, so routine work never waits on a
+    /// human. Escalations are answered by a detached task once the operator responds or the
+    /// deadline passes — the actor must not block here, or the agent's other output would stop
+    /// being read while a prompt sits unanswered.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_permission_request(
+        &mut self,
+        request_id: String,
+        tool: String,
+        input: serde_json::Value,
+        reason_type: Option<String>,
+        blocked_path: Option<String>,
+        suggestions: Vec<serde_json::Value>,
+    ) {
+        let Some(broker) = self.broker.clone() else {
+            return;
+        };
+
+        let (verdict, rationale) = broker.evaluate(
+            &request_id,
+            &tool,
+            &input,
+            reason_type,
+            blocked_path,
+            suggestions,
+        );
+
+        match verdict {
+            Verdict::Immediate(resolution) => {
+                tracing::debug!(?rationale, tool = %tool, "permission settled by policy");
+                self.answer_permission(request_id, resolution).await;
+            }
+            Verdict::Escalated { request, wait } => {
+                tracing::info!(?rationale, tool = %tool, "permission escalated to operator");
+                let tx = self.self_tx.clone();
+                let broker = broker.clone();
+                let id = request.request_id.clone();
+                tokio::spawn(async move {
+                    let resolution = await_resolution(broker, id.clone(), wait).await;
+                    let _ = tx
+                        .send(SessionCmd::RespondPermission {
+                            request_id: id,
+                            decision: to_wire_decision(resolution),
+                        })
+                        .await;
+                });
+            }
+        }
+    }
+
+    async fn answer_permission(&self, request_id: String, resolution: Resolution) {
+        let _ = self
+            .self_tx
+            .send(SessionCmd::RespondPermission {
+                request_id,
+                decision: to_wire_decision(resolution),
+            })
+            .await;
     }
 
     async fn on_exit(
@@ -459,6 +553,13 @@ impl Actor {
         let mut attribution = self.attribution;
         attribution.session_id = Some(self.session_id);
         self.bus.publish(attribution, event).await;
+    }
+}
+
+fn to_wire_decision(resolution: Resolution) -> PermissionDecision {
+    match resolution {
+        Resolution::Allowed { updated_input } => PermissionDecision::Allow { updated_input },
+        Resolution::Denied { message } => PermissionDecision::Deny { message },
     }
 }
 

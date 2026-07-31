@@ -796,6 +796,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "deck-mcp"
+version = "0.1.0"
+dependencies = [
+ "deck-core",
+ "serde_json",
+]
+
+[[package]]
 name = "deck-supervisor"
 version = "0.1.0"
 dependencies = [

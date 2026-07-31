@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/deck-core", "crates/deck-supervisor", "src-tauri"]
+members = ["crates/deck-core", "crates/deck-mcp", "crates/deck-supervisor", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 deck-core = { path = "crates/deck-core" }
+deck-mcp = { path = "crates/deck-mcp" }
 deck-supervisor = { path = "crates/deck-supervisor" }
 
 tokio = { version = "1", features = ["full"] }

@@ -7,6 +7,7 @@
 //!
 //! Implemented in M6; this crate exists from M0 so the compile boundary is real.
 
+pub mod contract;
 pub mod graph;
 
 /// The stage pipeline of one supervisor iteration. `Sweep` runs every tick and is free;

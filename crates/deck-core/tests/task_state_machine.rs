@@ -363,3 +363,23 @@ fn active_and_terminal_classifications_match_the_lifecycle() {
         assert!(!s.is_active());
     }
 }
+
+#[test]
+fn a_queued_task_can_be_blocked_before_anyone_starts_it() {
+    // The supervisor may escalate an ambiguity about a task before dispatching it — "approach A
+    // or B?" — and that task is genuinely blocked, not merely waiting its turn in the queue.
+    let s = apply(&fresh(), TaskEvent::Enqueued).unwrap();
+    let s = apply(
+        &s,
+        TaskEvent::Blocked {
+            reason: "needs an approach decision".into(),
+        },
+    )
+    .unwrap();
+
+    assert_eq!(s.status, TaskStatus::Blocked);
+    assert_eq!(s.attempts, 0, "blocking before dispatch costs no attempt");
+
+    let s = apply(&s, TaskEvent::Unblocked).unwrap();
+    assert_eq!(s.status, TaskStatus::Queued);
+}

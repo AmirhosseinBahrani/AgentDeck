@@ -233,7 +233,10 @@ pub fn apply(state: &TaskState, event: TaskEvent) -> Result<TaskState, Transitio
             }
         }
 
-        (S::Running | S::Assigned | S::Review, E::Blocked { reason }) => TaskState {
+        // Queued is included deliberately: the supervisor can escalate an ambiguity about a
+        // task before anyone is dispatched to it, and that task is blocked, not merely waiting
+        // its turn.
+        (S::Queued | S::Running | S::Assigned | S::Review, E::Blocked { reason }) => TaskState {
             status: S::Blocked,
             failure_reason: Some(reason.clone()),
             ..state.clone()

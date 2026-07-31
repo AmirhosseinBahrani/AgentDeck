@@ -10,6 +10,7 @@
 use crate::bus::{Attribution, EventBus};
 use crate::domain::event::{AgentEvent, ExitReason};
 use crate::domain::ids::SessionId;
+use crate::permission::PermissionBroker;
 use crate::runtime::claude_code::translate::Translator;
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,6 +39,9 @@ pub struct MockRuntime {
     /// Scripted responses keyed by fixture name, so a test can register its own NDJSON
     /// rather than relying on files on disk.
     scripts: DashMap<String, Vec<String>>,
+    /// Optional broker. When set, a replayed `can_use_tool` is evaluated for real, so the
+    /// escalation the UI receives is a genuine pending request rather than a mock-up.
+    broker: parking_lot::Mutex<Option<Arc<PermissionBroker>>>,
 }
 
 impl MockRuntime {
@@ -46,7 +50,12 @@ impl MockRuntime {
             bus,
             speed,
             scripts: DashMap::new(),
+            broker: parking_lot::Mutex::new(None),
         }
+    }
+
+    pub fn set_broker(&self, broker: Arc<PermissionBroker>) {
+        *self.broker.lock() = Some(broker);
     }
 
     /// Registers an inline script. Useful for supervisor tests that need one specific
@@ -99,6 +108,36 @@ impl MockRuntime {
                 tokio::time::sleep(gap).await;
             }
             for event in translator.translate(line) {
+                // Register the escalation with the broker before publishing, so by the time
+                // the UI sees the event the request is already answerable.
+                if let AgentEvent::PermissionRequest {
+                    request_id,
+                    tool,
+                    input,
+                    reason_type,
+                    blocked_path,
+                    suggestions,
+                } = &event
+                {
+                    if let Some(broker) = self.broker.lock().clone() {
+                        let (verdict, _) = broker.evaluate(
+                            request_id,
+                            tool,
+                            input,
+                            reason_type.clone(),
+                            blocked_path.clone(),
+                            suggestions.clone(),
+                        );
+                        // Hold the receiver, exactly as the actor does. Dropping it would
+                        // leave the request listed as pending while nothing waits for the
+                        // answer, so the operator's click would silently do nothing.
+                        if let crate::permission::Verdict::Escalated { wait, .. } = verdict {
+                            tokio::spawn(async move {
+                                let _ = wait.await;
+                            });
+                        }
+                    }
+                }
                 self.bus.publish(attribution, event).await;
             }
             emitted.fetch_add(1, Ordering::Relaxed);

@@ -135,3 +135,61 @@ async fn concurrent_replay_delivers_every_event_from_every_session() {
         "concurrent replay took {elapsed:?}, which suggests it is not actually concurrent"
     );
 }
+
+#[tokio::test]
+async fn a_replayed_escalation_is_registered_with_the_broker_not_just_displayed() {
+    // The demo path must be honest: replaying a captured `can_use_tool` should produce a
+    // genuinely answerable request, otherwise the escalation UI would be a mock-up that
+    // silently diverges from real behaviour.
+    use deck_core::permission::broker::{PermissionBroker, Resolution};
+    use deck_core::permission::{worker_defaults, EffectivePolicy};
+
+    let (bus, mut durable) = EventBus::new();
+    let mock = MockRuntime::new(bus, Speed::Immediate);
+    mock.register_fixture_dir(fixtures())
+        .expect("load fixtures");
+
+    // Root the policy somewhere the fixture's target path is definitely outside of.
+    let root = std::env::temp_dir().join(format!("agentdeck-mockperm-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let policy = EffectivePolicy::resolve(root.canonicalize().unwrap(), &[worker_defaults()]);
+    let broker = Arc::new(PermissionBroker::new(policy));
+    mock.set_broker(broker.clone());
+
+    mock.replay("probe6-permission-ask.ndjson", Attribution::default())
+        .await
+        .expect("fixture should be registered");
+
+    let mut request_id = None;
+    while let Ok(env) = durable.try_recv() {
+        if let AgentEvent::PermissionRequest {
+            request_id: id,
+            reason_type,
+            ..
+        } = env.event
+        {
+            assert_eq!(
+                reason_type.as_deref(),
+                Some("workingDir"),
+                "the CLI's classification must survive replay"
+            );
+            request_id = Some(id);
+        }
+    }
+
+    let id = request_id.expect("replay should emit a permission request");
+    assert!(
+        broker.is_pending(&id),
+        "the escalation must be answerable, not merely rendered"
+    );
+
+    broker
+        .resolve(
+            &id,
+            Resolution::Allowed {
+                updated_input: serde_json::Value::Null,
+            },
+        )
+        .expect("operator answer should apply");
+    assert_eq!(broker.pending_count(), 0);
+}

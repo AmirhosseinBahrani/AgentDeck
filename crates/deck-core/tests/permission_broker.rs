@@ -193,7 +193,7 @@ async fn answering_twice_is_reported_rather_than_panicking() {
     );
     assert!(
         second.is_err(),
-        "second answer should be reported as unknown"
+        "second answer should be reported, not silently accepted"
     );
 
     drop(wait);

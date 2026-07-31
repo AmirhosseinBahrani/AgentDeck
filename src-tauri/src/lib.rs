@@ -21,6 +21,8 @@ pub fn run() {
             events::get_events_since,
             events::replay_fixture,
             events::list_fixtures,
+            events::respond_permission,
+            events::pending_permission_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,19 @@
+[package]
+name = "deck-supervisor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "AgentDeck supervisor: deterministic controller around Claude for planning, dispatch, review and completion"
+
+[lints]
+workspace = true
+
+[dependencies]
+deck-core = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

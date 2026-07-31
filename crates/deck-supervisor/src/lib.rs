@@ -7,6 +7,8 @@
 //!
 //! Implemented in M6; this crate exists from M0 so the compile boundary is real.
 
+pub mod graph;
+
 /// The stage pipeline of one supervisor iteration. `Sweep` runs every tick and is free;
 /// only a dirty run advances through the stages, so an idle run costs nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

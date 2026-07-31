@@ -1,5 +1,6 @@
 mod background;
 mod events;
+mod persistence;
 mod state;
 mod supervision;
 
@@ -41,6 +42,7 @@ pub fn run() {
             events::resume_session,
             events::approve_dispatch,
             events::force_kill_agent,
+            events::get_last_run,
         ])
         .setup(|app| {
             background::install_tray(app.handle())?;

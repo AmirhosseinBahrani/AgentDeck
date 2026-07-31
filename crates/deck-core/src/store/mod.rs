@@ -8,6 +8,7 @@
 pub mod events;
 pub mod identity;
 pub mod processes;
+pub mod runs;
 pub mod sessions;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};

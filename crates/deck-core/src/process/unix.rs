@@ -2,9 +2,9 @@
 //!
 //! Uses `nix` rather than raw `libc` so the signalling paths contain no `unsafe`.
 
-use super::ProcessGroup;
+use super::{ProcessGroup, Reaped};
 use nix::errno::Errno;
-use nix::sys::signal::{killpg, Signal};
+use nix::sys::signal::{kill, killpg, Signal};
 use nix::unistd::Pid;
 use std::io;
 
@@ -64,4 +64,30 @@ impl ProcessGroup for UnixProcessGroup {
     fn pid(&self) -> u32 {
         self.pgid.as_raw() as u32
     }
+}
+
+pub(super) fn reap_orphan_group(pgid: u32) -> io::Result<Reaped> {
+    let group = Pid::from_raw(pgid as i32);
+    // Probed first so the caller can distinguish "we killed something that survived the crash"
+    // from "the record was simply stale" — the two mean very different things in a log a user
+    // reads after an unexpected exit.
+    if killpg(group, None).is_err() {
+        return Ok(Reaped::AlreadyGone);
+    }
+    match killpg(group, Some(Signal::SIGKILL)) {
+        Ok(()) => Ok(Reaped::Killed),
+        Err(Errno::ESRCH) => Ok(Reaped::AlreadyGone),
+        Err(e) => Err(io::Error::from(e)),
+    }
+}
+
+pub(super) fn pid_is_alive(pid: u32) -> bool {
+    // 0 is not a pid to `kill`: it means "every process in the caller's own group", which
+    // always succeeds and would report a nonexistent owner as alive. Rows written before
+    // ownership was recorded carry exactly that value, so without this guard their orphaned
+    // agents would look owned and never be reaped.
+    if pid == 0 {
+        return false;
+    }
+    kill(Pid::from_raw(pid as i32), None).is_ok()
 }

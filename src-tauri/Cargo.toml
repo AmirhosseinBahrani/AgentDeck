@@ -22,7 +22,7 @@ tauri-build = { version = "2", features = [] }
 deck-core = { workspace = true }
 deck-supervisor = { workspace = true }
 
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 
 tokio = { workspace = true }
@@ -36,3 +36,4 @@ tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }
+tauri-plugin-notification = "2.3.3"

@@ -100,3 +100,20 @@ export interface RunSnapshot {
   tasks: TaskSummary[];
   decisions: DecisionSummary[];
 }
+
+/** What starting up had to clean up after a previous launch. */
+export interface RecoveryReport {
+  killed_orphans: number;
+  stale_records: number;
+  interrupted_sessions: number;
+}
+
+export interface ResumableSummary {
+  session_id: string;
+  task_id: string | null;
+  /** The directory the session ran in. `--resume` only works from here. */
+  cwd: string;
+  status: string;
+  /** False once the worktree is gone, which makes the conversation unreachable. */
+  resumable: boolean;
+}

@@ -3,7 +3,9 @@ use deck_core::domain::event::EventEnvelope;
 use deck_core::domain::ids::Seq;
 use deck_core::permission::{worker_defaults, EffectivePolicy, PermissionBroker};
 use deck_core::runtime::mock::{MockRuntime, Speed};
-use deck_core::store::Store;
+use deck_core::store::identity::{self, LocalIdentity};
+use deck_core::store::processes::{self, BootId};
+use deck_core::store::{sessions, Store};
 use deck_core::workspace::WorkspaceRegistry;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -55,6 +57,25 @@ pub struct AppState {
     pub run_snapshot: Arc<Mutex<Option<crate::events::RunSnapshot>>>,
     /// Worker reports awaiting the driver's IngestReports stage.
     pub pending_claims: crate::supervision::SharedClaims,
+    /// Identifies this launch, so agents recorded by a previous one can be told apart from
+    /// agents belonging to a second instance running right now.
+    pub boot: BootId,
+    /// The workspace and project rows every durable record hangs off.
+    pub identity: LocalIdentity,
+    /// What the boot-time reconcile found, so the UI can say so instead of it happening
+    /// silently. An operator whose agents were killed deserves to know.
+    pub startup_recovery: RecoveryReport,
+}
+
+/// What starting up had to clean up after a previous launch.
+#[derive(serde::Serialize, Clone, Default)]
+pub struct RecoveryReport {
+    /// Agents that outlived a crashed app and have now been killed.
+    pub killed_orphans: usize,
+    /// Records for processes that were already gone.
+    pub stale_records: usize,
+    /// Sessions a crash interrupted, which can be resumed from their original directory.
+    pub interrupted_sessions: u64,
 }
 
 impl AppState {
@@ -99,9 +120,15 @@ impl AppState {
 
         // Rooted at the process's working directory: real agent worktrees are created under
         // whichever project the operator opens, which arrives with the project model in M4.
-        let workspaces = Arc::new(WorkspaceRegistry::new(
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-        ));
+        let repo = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let workspaces = Arc::new(WorkspaceRegistry::new(repo.clone()));
+
+        let identity = identity::ensure_project(&store, &repo)
+            .await
+            .map_err(|e| format!("could not register this project: {e}"))?;
+
+        let boot = BootId::new();
+        let startup_recovery = Self::reconcile(&store, &boot).await;
 
         Ok(Self {
             bus,
@@ -114,7 +141,54 @@ impl AppState {
             run_triggers: Arc::new(Mutex::new(None)),
             run_snapshot: Arc::new(Mutex::new(None)),
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            boot,
+            identity,
+            startup_recovery,
         })
+    }
+
+    /// Converges the database's picture of what is running with reality.
+    ///
+    /// Runs before anything can touch a worktree. An agent that outlived a crash is still
+    /// writing commits into a directory this launch is about to hand to a new agent, and two
+    /// agents in one worktree produce a diff neither of them can be held to — so this is a
+    /// correctness step, not tidiness.
+    ///
+    /// Failures here are logged rather than fatal. Refusing to start because cleanup failed
+    /// would leave the operator with no way to reach the app that could fix it.
+    async fn reconcile(store: &Store, boot: &BootId) -> RecoveryReport {
+        let reaped = processes::reap_orphans(store, boot)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(%e, "could not reap orphaned agents");
+                Default::default()
+            });
+        if !reaped.owned_elsewhere.is_empty() {
+            tracing::warn!(
+                count = reaped.owned_elsewhere.len(),
+                "another AgentDeck instance owns these agents; leaving them alone"
+            );
+        }
+
+        let interrupted = sessions::mark_interrupted_on_boot(store)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(%e, "could not mark interrupted sessions");
+                0
+            });
+
+        RecoveryReport {
+            killed_orphans: reaped.killed.len(),
+            stale_records: reaped.stale.len(),
+            interrupted_sessions: interrupted,
+        }
+    }
+
+    /// Sessions a crash left behind, each with the directory `--resume` must run from.
+    pub async fn resumable_sessions(&self) -> Vec<sessions::ResumableSession> {
+        sessions::resumable(&self.store, 50)
+            .await
+            .unwrap_or_default()
     }
 
     /// Beside the user's data directory rather than the current working directory, so a run does

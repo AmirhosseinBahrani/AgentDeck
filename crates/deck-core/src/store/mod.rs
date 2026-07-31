@@ -6,6 +6,9 @@
 //! reads concurrently.
 
 pub mod events;
+pub mod identity;
+pub mod processes;
+pub mod sessions;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};

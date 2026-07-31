@@ -10,6 +10,9 @@ use deck_core::domain::ids::{SessionId, TaskId};
 use deck_core::report_server::{ReportServer, ReportSink};
 use deck_core::reporting::{mcp_config, socket_path, ReportAck, ReportEnvelope, WorkerReport};
 use deck_core::runtime::claude_code::actor::{spawn_session, SessionCmd, SessionHandle};
+use deck_core::store::identity::LocalIdentity;
+use deck_core::store::processes::{self, BootId, ProcessRecord};
+use deck_core::store::{sessions, Store};
 use deck_core::workspace::{PrepareRequest, WorkspaceRegistry};
 use deck_supervisor::workspaces::{DispatchError, DispatchRequest, DispatchedAgent, Workspaces};
 use std::path::PathBuf;
@@ -31,6 +34,10 @@ pub struct LiveWorkspaces {
     /// Base branch new worktrees start from.
     base_ref: String,
     model: Option<String>,
+    /// Durable records of what is running, so a crash leaves evidence rather than orphans.
+    store: Store,
+    boot: BootId,
+    identity: LocalIdentity,
 }
 
 impl LiveWorkspaces {
@@ -39,6 +46,9 @@ impl LiveWorkspaces {
         bus: Arc<EventBus>,
         base_ref: String,
         sink: Arc<dyn ReportSink>,
+        store: Store,
+        boot: BootId,
+        identity: LocalIdentity,
     ) -> Self {
         Self {
             registry,
@@ -50,6 +60,9 @@ impl LiveWorkspaces {
             runtime_dir: PathBuf::from("/tmp"),
             base_ref,
             model: None,
+            store,
+            boot,
+            identity,
         }
     }
 
@@ -117,7 +130,15 @@ impl Workspaces for LiveWorkspaces {
             task_id: Some(request.task_id),
         };
 
-        let (handle, _join) = spawn_session(opts, self.bus.clone()).await.map_err(|e| {
+        let argv: Vec<String> = opts
+            .config
+            .to_argv()
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let permission_mode = opts.config.permission_mode.as_flag().to_string();
+
+        let (handle, join) = spawn_session(opts, self.bus.clone()).await.map_err(|e| {
             DispatchError::SpawnFailed {
                 task_id: request.task_id,
                 detail: e.to_string(),
@@ -125,6 +146,54 @@ impl Workspaces for LiveWorkspaces {
         })?;
 
         let handle = Arc::new(handle);
+
+        // Recorded before the agent is given any work: the window between spawning a process and
+        // knowing about it is exactly the window in which a crash produces an orphan nobody can
+        // find. A failed write is logged rather than fatal — refusing to dispatch because
+        // bookkeeping failed would be a worse outcome than an unrecorded process.
+        let record = ProcessRecord {
+            session_id: session_id.to_string(),
+            task_id: Some(request.task_id.to_string()),
+            pid: handle.pid(),
+            pgid: handle.pid(),
+            worktree_path: Some(workspace.worktree.path.clone()),
+        };
+        if let Err(e) = processes::record(&self.store, &self.boot, &record).await {
+            tracing::error!(%e, "could not record a running agent process");
+        }
+        if let Err(e) = sessions::record_started(
+            &self.store,
+            &sessions::NewSession {
+                session_id,
+                agent_id: request.agent_id,
+                project_id: self.identity.project_id.clone(),
+                task_id: Some(request.task_id),
+                // The worktree, which is what --resume must be re-invoked from. Recording
+                // anything else would make the session unresumable.
+                cwd: workspace.worktree.path.clone(),
+                argv,
+                model: self.model.clone(),
+                permission_mode,
+            },
+        )
+        .await
+        {
+            tracing::error!(%e, "could not record a session");
+        }
+
+        // Closes the records out when the agent exits, whatever the reason. Without this a clean
+        // exit would leave a row claiming the process is still alive, and the next launch would
+        // try to reap a pid that has since been reused by something unrelated.
+        {
+            let store = self.store.clone();
+            tokio::spawn(async move {
+                let reason = join
+                    .await
+                    .unwrap_or(deck_core::domain::event::ExitReason::Clean);
+                let _ = sessions::record_ended(&store, session_id, &reason).await;
+                let _ = processes::forget(&store, &session_id.to_string()).await;
+            });
+        }
         handle
             .send(SessionCmd::SendText(request.brief))
             .await
@@ -291,7 +360,7 @@ impl ReportSink for SupervisorSink {
             // Deliberately not "done". The claim is queued for verification, and saying otherwise
             // would let the agent believe it had finished before its criteria were checked.
             WorkerReport::ClaimTaskDone { .. } => {
-                "Completion claimed. Your acceptance criteria will now be verified; if any fail                  the task comes back to you."
+                "Completion claimed. Your acceptance criteria will now be verified; if any fail the task comes back to you."
             }
             WorkerReport::ReportProgress { .. } => "Progress recorded.",
             WorkerReport::RaiseBlocker { .. } => {

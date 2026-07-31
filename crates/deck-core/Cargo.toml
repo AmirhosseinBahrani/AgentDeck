@@ -27,6 +27,10 @@ ts-rs = { workspace = true }
 sysinfo = { workspace = true }
 dunce = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
+
 [dev-dependencies]
+nix = { workspace = true }
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
 uuid = { workspace = true }

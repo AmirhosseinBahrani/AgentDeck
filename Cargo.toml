@@ -39,6 +39,7 @@ parking_lot = "0.12"
 ts-rs = { version = "10", features = ["serde-compat", "uuid-impl"] }
 sysinfo = "0.33"
 dunce = "1"
+nix = { version = "0.29", features = ["signal", "process"] }
 
 [workspace.lints.rust]
 unsafe_code = "warn"

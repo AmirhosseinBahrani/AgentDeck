@@ -11,6 +11,10 @@ use deck_core::process::{self, ProcessGroup};
 use std::time::Duration;
 use tokio::process::Command;
 
+/// Spawning real process trees in parallel contends badly on small CI runners, which makes
+/// liveness assertions flaky for reasons unrelated to the code. Serialize them.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Spawns a shell that starts a long-lived grandchild, then waits. Mirrors the shape of
 /// `claude` spawning tool subprocesses.
 async fn spawn_tree() -> (tokio::process::Child, process::PlatformProcessGroup) {
@@ -29,19 +33,30 @@ async fn spawn_tree() -> (tokio::process::Child, process::PlatformProcessGroup) 
     (child, group)
 }
 
+/// Lists every live process in the given process group.
+///
+/// Enumerates all processes and filters by pgid rather than using `ps -g`: that flag selects
+/// by process group on BSD but by *group name* on GNU/procps, so it silently returns nothing
+/// on Linux and the test would assert against an empty set.
 fn descendants_of(pgid: u32) -> Vec<u32> {
     let out = std::process::Command::new("ps")
-        .args(["-o", "pid=", "-g", &pgid.to_string()])
+        .args(["-e", "-o", "pid=,pgid="])
         .output()
         .expect("run ps");
     String::from_utf8_lossy(&out.stdout)
         .lines()
-        .filter_map(|l| l.trim().parse::<u32>().ok())
+        .filter_map(|line| {
+            let mut cols = line.split_whitespace();
+            let pid = cols.next()?.parse::<u32>().ok()?;
+            let group = cols.next()?.parse::<u32>().ok()?;
+            (group == pgid).then_some(pid)
+        })
         .collect()
 }
 
 #[tokio::test]
 async fn kill_now_terminates_the_entire_process_group() {
+    let _serial = SERIAL.lock().await;
     let (mut child, group) = spawn_tree().await;
     let pgid = group.pid();
 
@@ -74,6 +89,7 @@ async fn kill_now_terminates_the_entire_process_group() {
 
 #[tokio::test]
 async fn kill_now_succeeds_even_when_the_group_is_already_gone() {
+    let _serial = SERIAL.lock().await;
     // The actor may race a natural exit. Killing an already-dead group is the caller's
     // goal already being satisfied, so it must not surface as an error.
     let (mut child, group) = spawn_tree().await;
@@ -94,6 +110,7 @@ async fn kill_now_succeeds_even_when_the_group_is_already_gone() {
 
 #[tokio::test]
 async fn is_alive_tracks_the_group_lifecycle() {
+    let _serial = SERIAL.lock().await;
     let (mut child, group) = spawn_tree().await;
     assert!(group.is_alive(), "group should be alive right after spawn");
 
@@ -113,6 +130,7 @@ async fn is_alive_tracks_the_group_lifecycle() {
 
 #[tokio::test]
 async fn child_is_in_its_own_group_not_the_test_runners() {
+    let _serial = SERIAL.lock().await;
     // If `process_group(0)` were ever dropped from the spawn path, the child would inherit
     // the test runner's group and `kill_now` would signal cargo itself.
     let (mut child, group) = spawn_tree().await;

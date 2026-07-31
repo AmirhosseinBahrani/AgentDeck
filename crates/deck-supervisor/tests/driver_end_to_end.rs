@@ -11,6 +11,7 @@ use deck_supervisor::decision::PlanLimits;
 use deck_supervisor::driver::{claim_done, Driver, IterationOutcome, Run, RunConfig, TeamMember};
 use deck_supervisor::loop_engine::{RunLimits, RunPhase};
 use deck_supervisor::planner::ScriptedPlanner;
+use deck_supervisor::workspaces::FakeWorkspaces;
 use serde_json::json;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -76,7 +77,8 @@ async fn a_full_run_reaches_completed_when_verification_passes() {
     let planner = ScriptedPlanner::new();
     planner.push(plan_with("true"), 0.10);
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
 
     // Iteration 1: plan, assign, dispatch.
@@ -114,7 +116,8 @@ async fn a_red_test_fails_the_task_without_the_reviewer_being_called() {
     let planner = ScriptedPlanner::new();
     planner.push(plan_with("exit 1"), 0.10);
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
 
     let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
@@ -162,7 +165,8 @@ async fn a_plan_that_fails_validation_twice_escalates_instead_of_guessing() {
     planner.push(bad.clone(), 0.10);
     planner.push(bad, 0.10);
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     driver.step(&mut run, true).await;
 
@@ -193,7 +197,8 @@ async fn a_plan_is_repaired_on_the_second_attempt_when_the_model_corrects_itself
     );
     planner.push(plan_with("true"), 0.10);
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     driver.step(&mut run, true).await;
 
@@ -231,7 +236,8 @@ async fn the_repair_prompt_tells_the_model_what_was_wrong() {
     );
     planner.push(plan_with("true"), 0.10);
 
-    Driver::new(&cfg, &planner)
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    Driver::new(&cfg, &planner, &workspaces)
         .step(&mut Run::new(), true)
         .await;
 
@@ -271,7 +277,8 @@ async fn a_contract_without_executable_verification_is_repaired_before_the_task_
         0.10,
     );
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
         panic!("expected advance");
@@ -332,7 +339,8 @@ async fn a_self_contradictory_review_escalates_rather_than_being_applied() {
         0.05,
     );
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
         panic!("expected advance");
@@ -366,7 +374,8 @@ async fn cost_accumulates_across_calls_and_stops_the_run_at_the_ceiling() {
     let planner = ScriptedPlanner::new();
     planner.push(plan_with("true"), 0.10); // already over the ceiling
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     driver.step(&mut run, true).await;
 
@@ -387,7 +396,8 @@ async fn a_planner_error_escalates_rather_than_crashing_the_run() {
     planner.push_error("connection reset");
     planner.push_error("connection reset again");
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     driver.step(&mut run, true).await;
 
@@ -402,7 +412,8 @@ async fn an_agent_that_never_claims_done_does_not_complete_its_task() {
     let planner = ScriptedPlanner::new();
     planner.push(plan_with("true"), 0.10);
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
         panic!("expected advance");
@@ -426,7 +437,8 @@ async fn claiming_done_from_an_illegal_state_is_refused() {
     let planner = ScriptedPlanner::new();
     planner.push(plan_with("true"), 0.10);
 
-    let driver = Driver::new(&cfg, &planner);
+    let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
     driver.step(&mut run, true).await;
 
@@ -448,7 +460,8 @@ async fn the_same_script_always_produces_the_same_outcome() {
         let planner = ScriptedPlanner::new();
         planner.push(plan_with("true"), 0.10);
 
-        let driver = Driver::new(&cfg, &planner);
+        let workspaces = FakeWorkspaces::new(cfg.verification_root.clone());
+        let driver = Driver::new(&cfg, &planner, &workspaces);
         let mut run = Run::new();
         let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
             panic!("expected advance");

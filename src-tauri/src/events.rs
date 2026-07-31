@@ -188,3 +188,96 @@ pub async fn respond_permission(
 pub async fn pending_permission_count(state: State<'_, AppState>) -> Result<usize, String> {
     Ok(state.workspaces.pending_permissions() + state.demo_broker.pending_count())
 }
+
+/// Starts a supervisor run against the current project.
+///
+/// Spawns the loop on a background task and returns immediately: a run can take many minutes, and
+/// blocking the IPC call would freeze the UI for its duration. Progress reaches the frontend
+/// through the event stream, which is already how everything else is observed.
+#[tauri::command]
+pub async fn start_supervisor_run(
+    state: State<'_, AppState>,
+    objective: String,
+    max_cost_usd: Option<f64>,
+) -> Result<(), String> {
+    use deck_supervisor::decision::PlanLimits;
+    use deck_supervisor::driver::{Driver, IterationOutcome, Run, RunConfig, TeamMember};
+    use deck_supervisor::loop_engine::RunLimits;
+
+    let repo = state.workspaces.repo().to_path_buf();
+
+    // The three seeded roles. Team configuration arrives with the project model; hard-coding them
+    // here keeps this honest about what exists rather than pretending to read config.
+    let team = vec![
+        TeamMember {
+            agent_id: deck_core::domain::ids::AgentId::new(),
+            role: "developer".into(),
+        },
+        TeamMember {
+            agent_id: deck_core::domain::ids::AgentId::new(),
+            role: "reviewer".into(),
+        },
+    ];
+
+    let config = RunConfig {
+        objective,
+        team,
+        default_test_command: "cargo test".into(),
+        verification_root: repo.clone(),
+        limits: RunLimits {
+            max_cost_usd: max_cost_usd.unwrap_or(5.0),
+            ..RunLimits::default()
+        },
+        plan_limits: PlanLimits::default(),
+        per_call_budget_usd: 1.0,
+        verification_timeout: std::time::Duration::from_secs(600),
+    };
+
+    let workspaces = std::sync::Arc::new(crate::supervision::LiveWorkspaces::new(
+        state.workspaces.clone(),
+        state.bus.clone(),
+        "main".into(),
+    ));
+    let planner = crate::supervision::CliPlanner::new(repo);
+
+    *state.live_run.lock().await = Some(workspaces.clone());
+
+    tauri::async_runtime::spawn(async move {
+        let driver = Driver::new(&config, &planner, workspaces.as_ref());
+        let mut run = Run::new();
+
+        loop {
+            match driver.step(&mut run, true).await {
+                IterationOutcome::Terminal(phase) => {
+                    tracing::info!(?phase, "supervisor run finished");
+                    break;
+                }
+                // Idle means the sweep found nothing to do. The loop is event-driven in the
+                // finished design; until the trigger plumbing lands, stopping is honest — better
+                // than a hot loop that spends money rediscovering the same nothing.
+                IterationOutcome::Idle => {
+                    tracing::info!("supervisor run idle; waiting for agent activity");
+                    break;
+                }
+                IterationOutcome::Advanced { dispatched } => {
+                    tracing::info!(count = dispatched.len(), "iteration advanced");
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+/// Stops the current run and force-kills every agent it started.
+///
+/// Force-kill rather than a cooperative stop: a wedged agent may never answer, and the operator
+/// asking to stop must always take effect immediately.
+#[tauri::command]
+pub async fn cancel_supervisor_run(state: State<'_, AppState>) -> Result<usize, String> {
+    let live = state.live_run.lock().await.take();
+    match live {
+        Some(workspaces) => Ok(workspaces.kill_all()),
+        None => Ok(0),
+    }
+}

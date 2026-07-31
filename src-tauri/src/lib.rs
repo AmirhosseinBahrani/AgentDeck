@@ -1,5 +1,6 @@
 mod events;
 mod state;
+mod supervision;
 
 use state::AppState;
 
@@ -23,6 +24,8 @@ pub fn run() {
             events::list_fixtures,
             events::respond_permission,
             events::pending_permission_count,
+            events::start_supervisor_run,
+            events::cancel_supervisor_run,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

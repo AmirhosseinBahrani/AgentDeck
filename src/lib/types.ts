@@ -66,3 +66,37 @@ export type TranscriptRow =
   | { id: string; type: "permission"; requestId: string; tool: string; reason: string | null }
   | { id: string; type: "turn"; costUsd: number | null; isError: boolean }
   | { id: string; type: "notice"; text: string; severity: "info" | "warn" | "error" };
+
+// Mirrors src-tauri's RunSnapshot. The dashboard reads one snapshot rather than several queries,
+// so objective, phase, tasks and counts always agree with each other.
+export interface TaskSummary {
+  id: string;
+  title: string;
+  status: string;
+  role: string;
+  attempts: number;
+  review_rounds: number;
+  objective_gate: boolean;
+  blocked_reason: string | null;
+}
+
+export interface DecisionSummary {
+  iteration: number;
+  stage: string;
+  kind: string;
+  /** "code" | "claude" | "human" — whether the model was actually driving. */
+  decided_by: string;
+  rationale: string;
+  repaired: boolean;
+}
+
+export interface RunSnapshot {
+  active: boolean;
+  objective: string;
+  phase: string;
+  iteration: number;
+  spent_usd: number;
+  open_escalations: number;
+  tasks: TaskSummary[];
+  decisions: DecisionSummary[];
+}

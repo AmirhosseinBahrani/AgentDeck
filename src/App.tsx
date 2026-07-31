@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
+import { TeamView } from "./features/team/TeamView";
 import { TranscriptView } from "./features/sessions/TranscriptView";
 import {
   useEventPump,
@@ -24,6 +25,9 @@ export default function App() {
   const [fixtures, setFixtures] = useState<string[]>([]);
   const [sessions, setSessions] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
+  // Team View is the landing surface, not a chat. Sessions are reachable from it rather than the
+  // other way round, which is what keeps the product from becoming a tab manager.
+  const [view, setView] = useState<"team" | "sessions">("team");
   const stats = usePumpStats();
 
   // Rust drops token deltas for anything not in this list, so it must reflect what is visible.
@@ -44,9 +48,21 @@ export default function App() {
       <header className="flex h-9 shrink-0 items-center justify-between border-b border-neutral-800 px-3">
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold">AgentDeck</span>
-          <span className="rounded bg-neutral-800 px-1.5 py-0.5 text-[10px] text-neutral-400">
-            M1 · runtime streaming
-          </span>
+          <nav className="ml-2 flex gap-0.5">
+            {(["team", "sessions"] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setView(tab)}
+                className={`rounded px-2 py-0.5 text-[11px] capitalize ${
+                  view === tab
+                    ? "bg-neutral-800 text-neutral-100"
+                    : "text-neutral-500 hover:text-neutral-300"
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </nav>
         </div>
         <div className="flex items-center gap-3 text-[11px] text-neutral-500">
           <span>{stats.batches} batches</span>
@@ -61,6 +77,11 @@ export default function App() {
           looking elsewhere, and a prompt buried in a hidden transcript would time out unseen. */}
       <EscalationLayer />
 
+      {view === "team" ? (
+        <div className="min-h-0 flex-1">
+          <TeamView onOpenSession={() => setView("sessions")} />
+        </div>
+      ) : (
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col border-r border-neutral-800">
           <Section title="Replay a captured session">
@@ -120,6 +141,7 @@ export default function App() {
           </div>
         </main>
       </div>
+      )}
 
       <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-neutral-800 px-3 text-[10px] text-neutral-600">
         <span>Sessions: {sessions.length}</span>

@@ -240,6 +240,10 @@ impl Workspaces for LiveWorkspaces {
             .map(|w| w.worktree.branch.clone())
     }
 
+    fn agent_alive(&self, task_id: TaskId) -> Option<bool> {
+        self.sessions.get(&task_id).map(|h| h.is_alive())
+    }
+
     async fn integrate(
         &self,
         contributions: &[deck_core::git::Contribution],

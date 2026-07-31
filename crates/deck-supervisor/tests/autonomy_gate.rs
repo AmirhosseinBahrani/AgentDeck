@@ -368,3 +368,128 @@ async fn branches_that_merge_but_break_together_block_rather_than_blaming_a_task
         "the task itself passed and must not be reopened"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Reap — agents that die without saying anything
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn an_agent_that_dies_without_claiming_done_fails_its_task() {
+    // `claim_task_done` is the only legal completion path, so a session that simply exits has
+    // failed rather than quietly succeeded. Without the reap the task sits in Running forever:
+    // nothing will report on it, no trigger arrives, and the run stalls with no sign of why.
+    let root = workdir("reap");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task = dispatched[0];
+    assert_eq!(run.graph.get(task).unwrap().status, TaskStatus::Running);
+
+    workspaces.kill_agent(task);
+    driver.step(&mut run, true).await;
+
+    assert!(
+        run.log.decisions.iter().any(|d| d.kind == "agent_died"),
+        "the death has to be noticed and recorded"
+    );
+    assert_eq!(
+        run.graph.get(task).unwrap().attempts,
+        2,
+        "the lost attempt is spent, so this cannot loop forever"
+    );
+}
+
+#[tokio::test]
+async fn a_task_that_keeps_losing_its_agent_eventually_fails_and_asks_for_a_human() {
+    // The counterpart to retrying: without an end, a task whose agent dies on every attempt
+    // would be re-dispatched forever and quietly drain the account's usage allowance.
+    let root = workdir("reap-exhausted");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task = dispatched[0];
+
+    // The agent dies on every attempt.
+    for _ in 0..4 {
+        workspaces.kill_agent(task);
+        driver.step(&mut run, true).await;
+    }
+
+    assert_eq!(
+        run.graph.get(task).unwrap().status,
+        TaskStatus::Failed,
+        "it has to stop trying"
+    );
+    assert!(
+        run.state.open_escalations > 0,
+        "and say so, rather than failing quietly"
+    );
+}
+
+#[tokio::test]
+async fn a_reaped_task_with_attempts_left_is_dispatched_again() {
+    let root = workdir("reap-retry");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task = dispatched[0];
+    workspaces.kill_agent(task);
+
+    // Reaped and re-queued in one pass; the next dispatch picks it back up.
+    driver.step(&mut run, true).await;
+    assert_eq!(
+        workspaces.dispatch_count(),
+        2,
+        "the task should have been given another agent"
+    );
+    assert_eq!(run.graph.get(task).unwrap().attempts, 2);
+}
+
+#[tokio::test]
+async fn a_task_that_is_merely_waiting_is_never_reaped() {
+    // `None` means no agent was ever started, which is a scheduling state rather than a death.
+    // Treating it as one would fail every task the moment it was assigned.
+    let root = workdir("reap-waiting");
+    let cfg = config(root.clone(), Autonomy::Assisted, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    driver.step(&mut run, true).await;
+    driver.step(&mut run, true).await;
+
+    let task = run.graph.tasks().next().unwrap();
+    assert_eq!(
+        task.status,
+        TaskStatus::Assigned,
+        "an unstarted task must survive the reap"
+    );
+    assert_eq!(task.attempts, 0);
+}

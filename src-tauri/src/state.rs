@@ -44,7 +44,10 @@ pub struct AppState {
     pub watched: Arc<Mutex<Vec<deck_core::domain::ids::SessionId>>>,
     /// Per-agent workspaces: each real agent gets its own worktree and its own broker, so a
     /// boundary is one agent's directory rather than the union of everyone's.
-    pub workspaces: Arc<WorkspaceRegistry>,
+    /// Swappable, because the operator can change project without restarting. Everything that
+    /// touches a worktree reads through this, so pointing it somewhere new is what "open another
+    /// repository" actually means.
+    pub workspaces: Arc<parking_lot::RwLock<Arc<WorkspaceRegistry>>>,
     /// Serves the fixture-replay demo only, which has no worktree of its own. Real agents never
     /// use it. It disappears once agents are launched from the UI in M4.
     pub demo_broker: Arc<PermissionBroker>,
@@ -74,7 +77,7 @@ pub struct AppState {
     /// The workspace and project rows every durable record hangs off.
     pub identity: LocalIdentity,
     /// The repository this instance works on, or `None` when it was not started inside one.
-    pub project: Option<std::path::PathBuf>,
+    pub project: Arc<parking_lot::RwLock<Option<std::path::PathBuf>>>,
     /// What the boot-time reconcile found, so the UI can say so instead of it happening
     /// silently. An operator whose agents were killed deserves to know.
     pub startup_recovery: RecoveryReport,
@@ -150,14 +153,26 @@ impl AppState {
         //
         // Deliberately no fallback to a previously-registered project: that would silently run
         // agents against whatever repository was opened last, which is worse than not starting.
-        let project = resolve_project();
+        // The repository the app was started in, or the one chosen last. A `.app` opened from
+        // Finder has a working directory of `/`, so the remembered choice is usually the only
+        // thing that identifies a project at all.
+        let project = match resolve_project() {
+            Some(root) => Some(root),
+            None => identity::active_project(&store).await.unwrap_or(None),
+        };
         let repo = project
             .clone()
             .unwrap_or_else(|| std::path::PathBuf::from("."));
-        let workspaces = Arc::new(WorkspaceRegistry::new(repo.clone()));
+        let workspaces = Arc::new(parking_lot::RwLock::new(Arc::new(WorkspaceRegistry::new(
+            repo.clone(),
+        ))));
 
         // Only registered when it is real. Recording "/" as a project would put a row in the
         // database that no run could ever use.
+        if let Some(root) = &project {
+            let _ = identity::set_active_project(&store, root).await;
+        }
+
         let identity = match &project {
             Some(root) => identity::ensure_project(&store, root)
                 .await
@@ -185,7 +200,7 @@ impl AppState {
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,
             identity,
-            project,
+            project: Arc::new(parking_lot::RwLock::new(project)),
             startup_recovery,
         })
     }
@@ -283,6 +298,36 @@ impl AppState {
 
 fn dirs_next_home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+impl AppState {
+    /// Points the app at another repository.
+    ///
+    /// Rebuilds the registry rather than mutating it: worktrees are keyed by task within a
+    /// repository, and carrying entries across a project change would hand an agent a path that
+    /// belongs to a different codebase.
+    pub async fn open_project(&self, root: std::path::PathBuf) -> Result<(), String> {
+        let root = root
+            .canonicalize()
+            .map_err(|e| format!("could not read {}: {e}", root.display()))?;
+        let Some(repo) = identity::repository_root(&root) else {
+            return Err(format!(
+                "{} is not inside a git repository, so there is nowhere for agents to work",
+                root.display()
+            ));
+        };
+
+        identity::ensure_project(&self.store, &repo)
+            .await
+            .map_err(|e| format!("could not register that project: {e}"))?;
+        identity::set_active_project(&self.store, &repo)
+            .await
+            .map_err(|e| format!("could not remember that project: {e}"))?;
+
+        *self.workspaces.write() = Arc::new(WorkspaceRegistry::new(repo.clone()));
+        *self.project.write() = Some(repo);
+        Ok(())
+    }
 }
 
 /// Finds the git repository the app was started in.

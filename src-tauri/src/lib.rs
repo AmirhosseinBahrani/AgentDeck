@@ -26,6 +26,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(
             // Blocking here is correct: without a database there is no audit log, and the app's
             // guarantees rest on having one. Starting up degraded would be worse than not starting.
@@ -53,6 +54,8 @@ pub fn run() {
             events::check_runtime,
             events::answer_escalation,
             events::get_task_diffs,
+            events::get_project,
+            events::set_project,
             events::list_agents,
             events::hire_agent,
             events::revoke_impact,

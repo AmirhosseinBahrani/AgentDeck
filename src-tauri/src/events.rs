@@ -173,10 +173,8 @@ pub async fn respond_permission(
     // Try the real per-agent brokers first; fall back to the demo broker used by fixture
     // replay. Looking the request up rather than having the UI track which agent owns it keeps
     // safety-critical bookkeeping out of the frontend.
-    match state
-        .workspaces
-        .resolve_permission(&request_id, resolution.clone())
-    {
+    let registry = state.workspaces.read().clone();
+    match registry.resolve_permission(&request_id, resolution.clone()) {
         Ok(()) => Ok(()),
         Err(_) => state
             .demo_broker
@@ -187,7 +185,7 @@ pub async fn respond_permission(
 
 #[tauri::command]
 pub async fn pending_permission_count(state: State<'_, AppState>) -> Result<usize, String> {
-    Ok(state.workspaces.pending_permissions() + state.demo_broker.pending_count())
+    Ok(state.workspaces.read().pending_permissions() + state.demo_broker.pending_count())
 }
 
 /// Starts a supervisor run against the current project.
@@ -213,7 +211,7 @@ pub async fn start_supervisor_run(
     // and nothing to verify against, and starting anyway would spend the rate limit producing
     // work with no home — the packaged app hits this whenever it is opened from Finder, which
     // gives it a working directory of `/`.
-    let Some(repo) = state.project.clone() else {
+    let Some(repo) = state.project.read().clone() else {
         return Err(
             "AgentDeck is not inside a git repository, so there is nowhere for agents to work. \
              Launch it from a repository — `cd <your repo> && open -a AgentDeck .` — or run \
@@ -299,7 +297,7 @@ pub async fn start_supervisor_run(
     ));
 
     let workspaces = std::sync::Arc::new(crate::supervision::LiveWorkspaces::new(
-        state.workspaces.clone(),
+        state.workspaces.read().clone(),
         state.bus.clone(),
         "main".into(),
         sink,
@@ -547,6 +545,39 @@ pub async fn answer_escalation(
     Ok(())
 }
 
+/// Which repository the app is working on.
+#[derive(serde::Serialize, Clone, Default)]
+pub struct ProjectInfo {
+    /// Absolute path, or None when no repository has been chosen yet.
+    pub path: Option<String>,
+    /// Just the directory name, which is what the title bar shows.
+    pub name: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_project(state: State<'_, AppState>) -> Result<ProjectInfo, String> {
+    let project = state.project.read().clone();
+    Ok(ProjectInfo {
+        name: project
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned()),
+        path: project.map(|p| p.display().to_string()),
+    })
+}
+
+/// Points the app at a repository the operator picks.
+///
+/// Validated here rather than trusted from the dialog: someone can choose any folder, and a
+/// directory that is not a repository has nowhere to put a worktree. The path is remembered, so
+/// a `.app` opened from Finder — which has no working directory to infer from — still knows
+/// what it is working on.
+#[tauri::command]
+pub async fn set_project(state: State<'_, AppState>, path: String) -> Result<ProjectInfo, String> {
+    state.open_project(std::path::PathBuf::from(path)).await?;
+    get_project(state).await
+}
+
 /// Everyone on the team, whether or not a run is active.
 ///
 /// Read from the roster rather than the run snapshot: the team exists between runs, and hiring
@@ -675,11 +706,11 @@ pub struct TaskDiff {
 
 #[tauri::command]
 pub async fn get_task_diffs(state: State<'_, AppState>) -> Result<Vec<TaskDiff>, String> {
-    let Some(repo) = state.project.clone() else {
+    let Some(repo) = state.project.read().clone() else {
         return Ok(Vec::new());
     };
     let snapshot = state.run_snapshot.lock().clone().unwrap_or_default();
-    let registry = state.workspaces.clone();
+    let registry = state.workspaces.read().clone();
 
     let mut out = Vec::new();
     for task in &snapshot.tasks {

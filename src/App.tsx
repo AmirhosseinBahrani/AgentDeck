@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
+import { ProjectGate, pickProject } from "./features/setup/ProjectGate";
 import { RuntimeGate } from "./features/setup/RuntimeGate";
 import { NavTabs, type NavTab } from "./features/shell/NavTabs";
 import { TitleBar } from "./features/shell/TitleBar";
@@ -13,7 +14,7 @@ import { SupervisorView } from "./features/views/SupervisorView";
 import { TaskGraphView } from "./features/views/TaskGraphView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import { useEventPump, usePumpStats, useSessionSubscriptions } from "./hooks/useEventPump";
-import type { RunSnapshot } from "./lib/types";
+import type { ProjectInfo, RunSnapshot } from "./lib/types";
 import "./index.css";
 
 /**
@@ -32,7 +33,9 @@ export default function App() {
     // keeps them from firing while the pointer is merely crossing a panel.
     <TooltipProvider delayDuration={350} skipDelayDuration={0}>
       <RuntimeGate>
-        <Deck />
+        <ProjectGate>
+          <Deck />
+        </ProjectGate>
       </RuntimeGate>
     </TooltipProvider>
   );
@@ -42,6 +45,7 @@ function Deck() {
   useEventPump();
 
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
+  const [project, setProject] = useState<ProjectInfo | null>(null);
   const [sessions, setSessions] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [view, setView] = useState<NavTab>("team");
@@ -59,6 +63,7 @@ function Deck() {
         .catch(() => {});
     read();
     const id = setInterval(read, 2000);
+    void invoke<ProjectInfo>("get_project").then(setProject).catch(() => {});
     return () => clearInterval(id);
   }, []);
 
@@ -74,7 +79,9 @@ function Deck() {
   return (
     <div className="relative flex h-full flex-col text-deck-text">
       <TitleBar
-        project={snapshot?.objective ? shorten(snapshot.objective) : "no run"}
+        project={project?.name ?? "no project"}
+        projectPath={project?.path ?? undefined}
+        onChangeProject={() => void pickProject().then((p) => p && setProject(p))}
         autonomy={snapshot?.autonomy ?? "assisted"}
         running={!!snapshot?.active}
       />
@@ -160,7 +167,3 @@ function Deck() {
   );
 }
 
-function shorten(objective: string): string {
-  const words = objective.trim().split(/\s+/).slice(0, 6).join(" ");
-  return words.length < objective.trim().length ? `${words}…` : words;
-}

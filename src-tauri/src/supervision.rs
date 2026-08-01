@@ -27,6 +27,12 @@ pub struct LiveWorkspaces {
     bus: Arc<EventBus>,
     /// Live agents, so a run can be stopped and the UI can attach to a transcript.
     sessions: DashMap<TaskId, Arc<SessionHandle>>,
+    /// When each agent was last observed doing anything.
+    ///
+    /// The signal that separates an agent still working from one that finished, said so in
+    /// prose, and never called `claim_task_done`. Both leave the task in Running; only this
+    /// tells them apart.
+    last_activity: DashMap<TaskId, std::time::Instant>,
     /// One reporting socket per session, held so it lives as long as the agent. Dropping it
     /// removes the socket and the agent's tools stop working mid-task.
     report_servers: DashMap<TaskId, ReportServer>,
@@ -68,6 +74,7 @@ impl LiveWorkspaces {
             registry,
             bus,
             sessions: DashMap::new(),
+            last_activity: DashMap::new(),
             report_servers: DashMap::new(),
             sink,
             mcp_binary: mcp_binary_path(),
@@ -81,6 +88,12 @@ impl LiveWorkspaces {
             accepts_edits: true,
             knowledge: None,
         }
+    }
+
+    /// Records that an agent did something. Called for every event the bus carries.
+    pub fn note_activity(&self, task_id: TaskId) {
+        self.last_activity
+            .insert(task_id, std::time::Instant::now());
     }
 
     /// Pins the model every agent this run spawns will use.
@@ -267,6 +280,10 @@ impl Workspaces for LiveWorkspaces {
             })?;
 
         self.sessions.insert(request.task_id, handle);
+        // Seeded at dispatch so silence is measured from the moment the agent was given work,
+        // not from whenever the first event happens to arrive.
+        self.last_activity
+            .insert(request.task_id, std::time::Instant::now());
 
         Ok(DispatchedAgent {
             session_id,
@@ -286,6 +303,25 @@ impl Workspaces for LiveWorkspaces {
 
     fn agent_alive(&self, task_id: TaskId) -> Option<bool> {
         self.sessions.get(&task_id).map(|h| h.is_alive())
+    }
+
+    fn idle_for(&self, task_id: TaskId) -> Option<std::time::Duration> {
+        // Only for a live agent. Silence from a process that has exited is a death, which reap
+        // already handles, and reporting it here too would fail the same task twice.
+        if self.sessions.get(&task_id).map(|h| h.is_alive()) != Some(true) {
+            return None;
+        }
+        self.last_activity.get(&task_id).map(|at| at.elapsed())
+    }
+
+    async fn nudge(&self, task_id: TaskId, message: &str) -> bool {
+        let Some(handle) = self.sessions.get(&task_id).map(|h| h.clone()) else {
+            return false;
+        };
+        handle
+            .send(deck_core::runtime::claude_code::actor::SessionCmd::SendText(message.to_string()))
+            .await
+            .is_ok()
     }
 
     async fn land(&self) -> deck_core::git::LandOutcome {

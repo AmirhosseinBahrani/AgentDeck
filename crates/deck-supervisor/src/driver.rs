@@ -83,6 +83,9 @@ pub struct Run {
     pub awaiting_verification: Vec<TaskId>,
     /// Dispatches a human has approved. Consumed on use, so approving once starts one agent.
     pub approved: HashSet<TaskId>,
+    /// Tasks already reminded of the completion protocol. One nudge each: repeating it is the
+    /// loop this design exists to avoid.
+    pub nudged: HashSet<TaskId>,
     /// Tasks that would have started but are waiting on a human. Surfaced so the operator can
     /// see what their attention is holding up rather than watching an apparently idle run.
     pub awaiting_approval: Vec<TaskId>,
@@ -107,6 +110,7 @@ impl Run {
             branches: HashMap::new(),
             awaiting_verification: Vec::new(),
             approved: HashSet::new(),
+            nudged: HashSet::new(),
             awaiting_approval: Vec::new(),
             escalations: Vec::new(),
             guidance: Vec::new(),
@@ -360,7 +364,10 @@ impl<'a> Driver<'a> {
 
             match stage {
                 Stage::IngestReports => self.stage_ingest_reports(run),
-                Stage::Reap => self.stage_reap(run),
+                Stage::Reap => {
+                    self.stage_reap(run);
+                    self.stage_unstick(run).await;
+                }
                 Stage::Plan if run.graph.is_empty() => self.stage_plan(run).await,
                 Stage::Assign => self.stage_assign(run).await,
                 Stage::Dispatch => dispatched = self.stage_dispatch(run).await,
@@ -368,16 +375,18 @@ impl<'a> Driver<'a> {
                 Stage::Judge => self.stage_judge(run).await,
                 Stage::CompletionCheck => self.stage_completion_check(run).await,
                 Stage::Commit => {
-                    // Counted only when the pass changed something.
-                    //
-                    // The cap exists to stop a loop that spins on the same state, but the sweep
-                    // asks for an iteration whenever any task is Running — which is the normal
-                    // condition for an agent doing its job. At a two-second tick, a run whose
-                    // agents worked for seven minutes burned all 200 and stopped with "iteration
-                    // cap reached", having looped over nothing. Progress is the thing worth
-                    // counting; time already has its own limit.
+                    // Always advanced: stage receipts are keyed by it, so a pass that reused the
+                    // number would find every stage already recorded and do nothing at all —
+                    // freezing the run rather than merely miscounting it.
+                    run.state.iteration += 1;
+
+                    // The cap is about looping, and the sweep asks for a pass whenever any task
+                    // is Running, which is the normal condition for an agent doing its job. At a
+                    // two-second tick that spent all 200 in seven minutes of ordinary progress.
+                    // Counting only passes that changed something measures the thing the cap is
+                    // for; wall clock and cost already have their own ceilings.
                     if progress_fingerprint(run) != before {
-                        run.state.iteration += 1;
+                        run.state.productive += 1;
                     }
                     run.state.spent_usd = run.log.cost();
                 }
@@ -392,6 +401,83 @@ impl<'a> Driver<'a> {
     // -----------------------------------------------------------------------
     // Reap — pure: notices agents that died without saying anything
     // -----------------------------------------------------------------------
+
+    /// Deals with an agent that is alive and has stopped doing anything.
+    ///
+    /// `claim_task_done` is the only legal completion path, and the common way to miss it is not
+    /// failure but forgetfulness: the agent finishes the work, writes "Done — the script prints
+    /// Hello, World! and exits 0", and stops. Its process stays up, so [`stage_reap`] never sees
+    /// a death, and the task sits in Running until the run ends. From the roster it is
+    /// indistinguishable from an agent still working.
+    ///
+    /// Nudged before being failed, because a silent agent is usually one tool call from done and
+    /// discarding the work to start again is the most expensive possible response. One nudge
+    /// only — repeating it is the loop this design exists to avoid — and if the silence outlasts
+    /// that, the task fails and the ordinary retry path takes over.
+    async fn stage_unstick(&self, run: &mut Run) {
+        let candidates: Vec<TaskId> = run
+            .graph
+            .tasks()
+            .filter(|t| t.status == TaskStatus::Running)
+            .map(|t| t.id)
+            .collect();
+
+        for id in candidates {
+            let Some(idle) = self.workspaces.idle_for(id) else {
+                continue;
+            };
+
+            if idle >= STALL_FAIL_AFTER {
+                let Some(current) = run.graph.get(id).cloned() else {
+                    continue;
+                };
+                if let Ok(next) = apply(
+                    &current,
+                    TaskEvent::Failed {
+                        reason: format!(
+                            "the agent went silent for {}s without claiming the task done",
+                            idle.as_secs()
+                        ),
+                    },
+                ) {
+                    run.graph.set_state(next);
+                }
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::Reap,
+                    "stalled",
+                    "silent_agent",
+                    &format!(
+                        "no activity for {}s; failed so it can be retried",
+                        idle.as_secs()
+                    ),
+                );
+                continue;
+            }
+
+            if idle >= STALL_NUDGE_AFTER && run.nudged.insert(id) {
+                let sent = self
+                    .workspaces
+                    .nudge(
+                        id,
+                        "You have gone quiet. If the work is finished, call `claim_task_done` \
+                         now — it is the only way to complete a task, and saying you are done in \
+                         a message does not count. If you are blocked, call `raise_blocker`.",
+                    )
+                    .await;
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::Reap,
+                    "nudge",
+                    if sent { "sent" } else { "unreachable" },
+                    &format!(
+                        "silent for {}s; reminded it of the completion protocol",
+                        idle.as_secs()
+                    ),
+                );
+            }
+        }
+    }
 
     /// Fails tasks whose agent is gone but never claimed completion.
     ///
@@ -1451,6 +1537,12 @@ pub fn claim_done(run: &mut Run, task_id: TaskId) -> bool {
 /// The decision count is deliberately part of this: a stage that consulted a model and recorded
 /// the answer did real work even when the graph came out looking the same, and excluding it would
 /// let a genuine model-calling loop run unbounded — which is exactly what the cap is for.
+/// How long an agent may say nothing before it is reminded of the completion protocol.
+const STALL_NUDGE_AFTER: Duration = Duration::from_secs(150);
+
+/// And how long before the task is failed so a fresh agent can take it.
+const STALL_FAIL_AFTER: Duration = Duration::from_secs(420);
+
 fn progress_fingerprint(run: &Run) -> (usize, usize, Vec<(TaskId, TaskStatus, u32, u32)>) {
     let mut tasks: Vec<(TaskId, TaskStatus, u32, u32)> = run
         .graph

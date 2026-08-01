@@ -118,7 +118,11 @@ impl Default for RunLimits {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RunState {
     pub phase: RunPhase,
+    /// Pipeline passes. Stage receipts are keyed by this, so it must advance on every pass or a
+    /// second pass would find every stage already recorded and run nothing at all.
     pub iteration: u32,
+    /// Passes that changed something. What the cap is actually about.
+    pub productive: u32,
     pub replans: u32,
     /// Summed from per-turn `result.total_cost_usd`, which the CLI reports per turn rather than
     /// cumulatively.
@@ -137,6 +141,7 @@ impl Default for RunState {
         Self {
             phase: RunPhase::Planning,
             iteration: 0,
+            productive: 0,
             replans: 0,
             spent_usd: 0.0,
             open_escalations: 0,
@@ -193,7 +198,7 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
         };
     }
 
-    if state.iteration >= limits.max_iterations {
+    if state.productive >= limits.max_iterations {
         notes.push(format!(
             "iteration cap reached ({}); stopping rather than looping",
             limits.max_iterations

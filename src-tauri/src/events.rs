@@ -360,10 +360,17 @@ pub async fn start_supervisor_run(
     {
         let mut observer = state.bus.subscribe();
         let triggers = triggers.clone();
+        let activity = workspaces.clone();
         tauri::async_runtime::spawn(async move {
             loop {
                 match observer.recv().await {
                     Ok(envelope) => {
+                        // Every event counts as a sign of life, not just the ones that wake the
+                        // loop: an agent quietly running tools is working, and treating that as
+                        // silence would nudge someone in the middle of their job.
+                        if let Some(task_id) = envelope.task_id {
+                            activity.note_activity(task_id);
+                        }
                         forward_event(&triggers, &envelope.event);
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
@@ -1910,7 +1917,9 @@ fn snapshot_of(
         escalations: run.escalations.clone(),
         guidance: run.guidance.clone(),
         phase: format!("{:?}", run.state.phase).to_lowercase(),
-        iteration: run.state.iteration,
+        // The productive count, not the raw pass count. "iteration 47" from a run that has made
+        // three decisions describes the polling loop rather than anything the operator did.
+        iteration: run.state.productive,
         spent_usd: run.state.spent_usd,
         open_escalations: run.state.open_escalations,
         tasks,

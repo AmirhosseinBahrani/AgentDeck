@@ -757,7 +757,7 @@ async fn polling_a_working_agent_does_not_consume_iterations() {
 
     // Plan and dispatch: real progress, and worth counting.
     driver.step(&mut run, true).await;
-    let after_dispatch = run.state.iteration;
+    let after_dispatch = run.state.productive;
     assert!(after_dispatch > 0, "planning and dispatching is progress");
 
     // The agent is now working and reports nothing. Every pass from here changes nothing.
@@ -766,7 +766,64 @@ async fn polling_a_working_agent_does_not_consume_iterations() {
     }
 
     assert_eq!(
-        run.state.iteration, after_dispatch,
+        run.state.productive, after_dispatch,
         "ten polls of an unchanged run must not spend ten iterations"
+    );
+    assert!(
+        run.state.iteration > run.state.productive,
+        "the pass counter still advances — stage receipts are keyed by it, and reusing a number \
+         would leave every stage already recorded and run nothing"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_that_finishes_without_claiming_is_nudged_then_failed() {
+    // The reported symptom: "developer is done but says running". `claim_task_done` is the only
+    // legal completion path, and the usual way to miss it is not failure but forgetfulness — the
+    // agent finishes, writes "Done — the script prints Hello, World!", and stops. Its process is
+    // still up, so reap sees no death, and the task sits in Running for the rest of the run
+    // looking exactly like an agent still working.
+    let root = workdir("silent-agent");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task = dispatched[0];
+
+    // Quiet for a while, but not long enough to give up on.
+    workspaces.set_idle(task, Duration::from_secs(200));
+    driver.step(&mut run, true).await;
+
+    assert_eq!(workspaces.nudges(), vec![task], "reminded, not discarded");
+    assert_eq!(
+        run.graph.get(task).unwrap().status,
+        TaskStatus::Running,
+        "a nudge must not itself end the task"
+    );
+
+    // Nudged again on the next pass would be the loop this design exists to avoid.
+    driver.step(&mut run, true).await;
+    assert_eq!(
+        workspaces.nudges().len(),
+        1,
+        "one nudge, not one per iteration"
+    );
+
+    // Still nothing. The task is failed and, having attempts left in an autonomous run, handed
+    // straight to a fresh agent — so it is Running again, but on a second attempt rather than
+    // the abandoned first.
+    let attempts_before = run.graph.get(task).unwrap().attempts;
+    workspaces.set_idle(task, Duration::from_secs(500));
+    driver.step(&mut run, true).await;
+
+    assert!(
+        run.graph.get(task).unwrap().attempts > attempts_before,
+        "prolonged silence must end the attempt rather than leaving it Running forever"
     );
 }

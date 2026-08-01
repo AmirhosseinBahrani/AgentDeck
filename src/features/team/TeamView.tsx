@@ -233,13 +233,25 @@ function ObjectiveHeader({
             Stop run
           </button>
         ) : (
+          // Disabled only on an empty objective. The previous eight-character floor was
+          // arbitrary — "fix CI" is a legitimate objective — and it greyed the button out with
+          // nothing on screen explaining why, which reads as the app being broken.
           <button
             onClick={onStart}
-            disabled={busy || objective.trim().length < 8}
+            disabled={busy || !objective.trim()}
+            title={objective.trim() ? undefined : "Describe what the team should build first"}
             className="rounded bg-neutral-100 px-2.5 py-1 text-[12px] font-medium text-neutral-900 hover:bg-white disabled:opacity-40"
           >
-            Start run
+            {busy ? "Starting…" : "Start run"}
           </button>
+        )}
+
+        {!running && !objective.trim() && (
+          // Said on screen, not only in a tooltip. A disabled control with no stated reason is
+          // indistinguishable from a broken one.
+          <span className="text-[11px] text-neutral-600">
+            Describe what the team should build.
+          </span>
         )}
       </div>
     </header>

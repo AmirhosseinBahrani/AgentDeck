@@ -200,3 +200,21 @@ export interface GraphEdge {
   /** "hard" blocks readiness; "soft" only orders the work. */
   kind: string;
 }
+
+export interface FileDiff {
+  path: string;
+  added: number;
+  removed: number;
+  /** False while the change is still only in the working tree. */
+  committed: boolean;
+}
+
+export interface TaskDiff {
+  task_id: string;
+  title: string;
+  role: string;
+  branch: string | null;
+  files: FileDiff[];
+  added: number;
+  removed: number;
+}

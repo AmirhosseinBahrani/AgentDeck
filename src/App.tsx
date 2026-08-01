@@ -7,6 +7,9 @@ import { RuntimeGate } from "./features/setup/RuntimeGate";
 import { NavTabs, type NavTab } from "./features/shell/NavTabs";
 import { TitleBar } from "./features/shell/TitleBar";
 import { TeamView } from "./features/team/TeamView";
+import { DecisionsView } from "./features/views/DecisionsView";
+import { DiffsView } from "./features/views/DiffsView";
+import { TaskGraphView } from "./features/views/TaskGraphView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import { useEventPump, usePumpStats, useSessionSubscriptions } from "./hooks/useEventPump";
 import type { RunSnapshot } from "./lib/types";
@@ -94,11 +97,31 @@ function Deck() {
         }
       />
 
-      {view === "team" ? (
+      {view === "team" && (
         <div className="min-h-0 flex-1">
           <TeamView onOpenSession={openSession} />
         </div>
-      ) : (
+      )}
+
+      {view === "graph" && (
+        <div className="min-h-0 flex-1">
+          <TaskGraphView snapshot={snapshot} onOpenSession={openSession} />
+        </div>
+      )}
+
+      {view === "diffs" && (
+        <div className="min-h-0 flex-1">
+          <DiffsView />
+        </div>
+      )}
+
+      {view === "decisions" && (
+        <div className="min-h-0 flex-1">
+          <DecisionsView snapshot={snapshot} />
+        </div>
+      )}
+
+      {view === "workspace" && (
         <WorkspaceView
           sessions={sessions}
           active={active}

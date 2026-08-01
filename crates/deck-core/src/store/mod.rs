@@ -5,6 +5,7 @@
 //! under load, which matters because the event writer commits continuously while the UI
 //! reads concurrently.
 
+pub mod agents;
 pub mod events;
 pub mod identity;
 pub mod processes;

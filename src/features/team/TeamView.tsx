@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Play, Square } from "lucide-react";
+import { Play, Square, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -9,6 +9,8 @@ import { cn } from "../../lib/utils";
 import { AgentRoster } from "./AgentRoster";
 import { AutonomyPicker } from "./AutonomyPicker";
 import { EscalationInbox } from "./EscalationInbox";
+import { HireAgent } from "./HireAgent";
+import { RevokeAgent } from "./RevokeAgent";
 import { TaskGraph } from "./TaskGraph";
 
 const SUPERVISOR_LOOP = ["observe", "plan", "assign", "review", "escalate"] as const;
@@ -29,6 +31,8 @@ export function TeamView({ onOpenSession }: { onOpenSession: (sessionId?: string
   const [error, setError] = useState<string | null>(null);
   const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
   const [now, setNow] = useState(Date.now());
+  const [hiring, setHiring] = useState(false);
+  const [revoking, setRevoking] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -126,6 +130,13 @@ export function TeamView({ onOpenSession }: { onOpenSession: (sessionId?: string
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <HireAgent open={hiring} onClose={() => setHiring(false)} onHired={() => void refresh()} />
+      <RevokeAgent
+        agent={snapshot?.agents.find((a) => a.id === revoking) ?? null}
+        onClose={() => setRevoking(null)}
+        onRevoked={() => void refresh()}
+      />
+
 
       <header className="flex shrink-0 items-end gap-[60px] border-b border-white/[0.07] px-7 pt-[22px] pb-[18px]">
         <div className="flex min-w-0 grow flex-col gap-3">
@@ -205,7 +216,16 @@ export function TeamView({ onOpenSession }: { onOpenSession: (sessionId?: string
             <AgentRoster
               agents={snapshot?.agents ?? []}
               onOpenSession={(id) => onOpenSession(id)}
+              onRevoke={setRevoking}
             />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-1 self-start"
+              onClick={() => setHiring(true)}
+            >
+              <UserPlus /> Hire an agent
+            </Button>
           </section>
 
           <section className="flex min-h-0 flex-col gap-3">

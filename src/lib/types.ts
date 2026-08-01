@@ -218,3 +218,23 @@ export interface TaskDiff {
   added: number;
   removed: number;
 }
+
+export interface AgentRecord {
+  id: string;
+  name: string;
+  slug: string;
+  role: string;
+  model: string | null;
+  system_prompt: string | null;
+  mcp_servers: string[];
+  max_concurrent_sessions: number;
+  is_seeded: boolean;
+  active: boolean;
+}
+
+/** What revoking an agent would interrupt. */
+export interface RevokeImpact {
+  live_sessions: number;
+  assigned_tasks: string[];
+  branch: string | null;
+}

@@ -1,4 +1,4 @@
-import { Terminal } from "lucide-react";
+import { Terminal, UserMinus } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import type { AgentSummary } from "../../lib/types";
@@ -17,14 +17,22 @@ import { cn } from "../../lib/utils";
 export function AgentRoster({
   agents,
   onOpenSession,
+  onRevoke,
 }: {
   agents: AgentSummary[];
   onOpenSession: (sessionId: string) => void;
+  onRevoke: (agentId: string) => void;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
       {agents.map((agent, i) => (
-        <AgentRow key={agent.id} agent={agent} index={i} onOpenSession={onOpenSession} />
+        <AgentRow
+          key={agent.id}
+          agent={agent}
+          index={i}
+          onOpenSession={onOpenSession}
+          onRevoke={onRevoke}
+        />
       ))}
     </div>
   );
@@ -34,10 +42,12 @@ function AgentRow({
   agent,
   index,
   onOpenSession,
+  onRevoke,
 }: {
   agent: AgentSummary;
   index: number;
   onOpenSession: (sessionId: string) => void;
+  onRevoke: (agentId: string) => void;
 }) {
   const running = agent.status === "running";
   const blocked = agent.status === "blocked";
@@ -107,6 +117,14 @@ function AgentRow({
         >
           {agent.status}
         </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" onClick={() => onRevoke(agent.id)}>
+              <UserMinus />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Take this agent off the roster.</TooltipContent>
+        </Tooltip>
         {agent.session_id && (
           <Tooltip>
             <TooltipTrigger asChild>

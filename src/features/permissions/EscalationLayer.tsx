@@ -1,6 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ShieldAlert } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Button } from "../../components/ui/button";
 import { useEscalations, type Escalation } from "../../hooks/useEscalations";
+import { cn } from "../../lib/utils";
 
 /**
  * Blocking permission prompts.
@@ -17,7 +20,8 @@ export function EscalationLayer() {
 
   return (
     <>
-      <div className="flex h-8 shrink-0 items-center justify-between border-b border-deck-attention/30 bg-deck-attention/12 px-3">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-deck-attention/30 bg-deck-attention/[0.12] px-3">
+        <ShieldAlert className="size-3.5 shrink-0 text-deck-attention" />
         <span className="text-[12px] text-deck-attention">
           {open.length === 1
             ? "An agent needs your decision"
@@ -62,23 +66,37 @@ function PermissionDialog({
   const expired = remaining !== null && remaining <= 0;
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="w-full max-w-xl rounded-lg border border-white/12 bg-white/4 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-white/8 px-4 py-2.5">
-          <h2 className="text-[13px] font-semibold text-deck-text">Permission required</h2>
+    // Fixed, not absolute: this has to cover the viewport regardless of what it is nested in or
+    // how far the transcript behind it has scrolled.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-6 backdrop-blur-sm">
+      {/*
+        Opaque, deliberately. This sits over a dense monospace transcript, and a translucent
+        panel left the agent's own output legible straight through the question being asked —
+        which is unreadable in exactly the moment that demands care. Blur alone is not enough
+        behind high-contrast text.
+      */}
+      <div className="animate-rise flex max-h-[80vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-deck-attention/25 bg-[#12161d] shadow-[0_32px_80px_-20px_rgba(0,0,0,0.85)]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] bg-deck-attention/[0.07] px-4 py-3">
+          <h2 className="flex items-center gap-2 text-[13px] font-semibold text-deck-text">
+            <ShieldAlert className="size-4 text-deck-attention" />
+            Permission required
+          </h2>
           {/* A silent auto-deny is the worst failure mode here, so the deadline is always shown. */}
           {remaining !== null && (
             <span
-              className={`font-mono text-[11px] ${
-                expired ? "text-deck-danger" : remaining < 60_000 ? "text-deck-attention" : "text-deck-faint"
-              }`}
+              className={cn(
+                "shrink-0 font-mono text-[11px] tabular-nums",
+                expired && "text-deck-danger",
+                !expired && remaining < 60_000 && "text-deck-attention",
+                !expired && remaining >= 60_000 && "text-deck-faint",
+              )}
             >
               {expired ? "declined — no response" : `auto-declines in ${formatRemaining(remaining)}`}
             </span>
           )}
         </div>
 
-        <div className="space-y-3 px-4 py-3">
+        <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-3.5">
           <Field label="Agent wants to use">
             <span className="font-mono text-deck-live">{escalation.tool}</span>
           </Field>
@@ -98,14 +116,14 @@ function PermissionDialog({
           )}
 
           <Field label="Input">
-            <pre className="max-h-40 overflow-auto rounded bg-black/30 p-2 font-mono text-[11px] text-deck-dim">
+            <pre className="max-h-40 overflow-auto rounded border border-white/[0.06] bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-deck-dim">
               {JSON.stringify(escalation.input, null, 2)}
             </pre>
           </Field>
 
           {escalation.suggestions.length > 0 && (
             <Field label="Claude suggests">
-              <ul className="space-y-0.5">
+              <ul className="space-y-1">
                 {escalation.suggestions.map((s, i) => (
                   <li key={i} className="text-[11px] text-deck-dim">
                     {/* Rendered from the CLI's structured suggestion, never parsed from prose. */}
@@ -123,21 +141,18 @@ function PermissionDialog({
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-white/8 px-4 py-2.5">
-          <button
-            disabled={busy}
-            onClick={() => void answer(false)}
-            className="rounded border border-white/12 px-3 py-1.5 text-[12px] text-deck-dim hover:bg-white/8 disabled:opacity-50"
-          >
+        <div className="flex shrink-0 items-center gap-3 border-t border-white/[0.08] bg-white/[0.02] px-4 py-3">
+          {/* What allowing actually does, next to the button that does it. "Once" is the whole
+              safety property here and it should not be something you have to already know. */}
+          <span className="grow text-[10.5px] leading-relaxed text-deck-faint">
+            Allowing applies to this one call. The agent asks again next time.
+          </span>
+          <Button variant="secondary" size="md" disabled={busy} onClick={() => void answer(false)}>
             Decline
-          </button>
-          <button
-            disabled={busy}
-            onClick={() => void answer(true)}
-            className="rounded-md bg-deck-attention px-3 py-1.5 text-[12px] font-medium text-deck-void transition-all hover:brightness-110 active:translate-y-px disabled:opacity-50"
-          >
+          </Button>
+          <Button variant="attention" size="md" disabled={busy} onClick={() => void answer(true)}>
             Allow once
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -147,8 +162,8 @@ function PermissionDialog({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-0.5 text-[10px] tracking-wider text-deck-faint uppercase">{label}</div>
-      <div className="text-[12px]">{children}</div>
+      <div className="label-micro mb-1">{label}</div>
+      <div className="text-[12px] leading-relaxed">{children}</div>
     </div>
   );
 }
@@ -185,8 +200,16 @@ function describeReason(reasonType: string): string {
       return "This tool always requires approval.";
     case "sandboxOverride":
       return "The command would run outside the sandbox.";
+    case "subcommandResults":
+      return "The command contains a subcommand, so what it will actually run cannot be checked in advance.";
+    case "otherPermissionRule":
+      return "A permission rule requires approval for this.";
     default:
-      return reasonType;
+      // Humanised rather than shown raw. These come straight from the CLI and new ones appear
+      // without warning — "subcommandResults" told an operator nothing about what to decide.
+      return reasonType
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .replace(/^./, (c) => c.toUpperCase());
   }
 }
 

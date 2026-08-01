@@ -290,7 +290,7 @@ async fn a_green_integration_lands_on_the_checked_out_branch() {
         .unwrap();
     assert!(matches!(outcome, IntegrationOutcome::Integrated { .. }));
 
-    let landed = manager.land(&repo, "main", &before).await.unwrap();
+    let landed = manager.land(&repo, "main").await.unwrap();
     assert!(
         matches!(landed, deck_core::git::LandOutcome::Landed { .. }),
         "got {landed:?}"
@@ -325,7 +325,7 @@ async fn landing_refuses_rather_than_overwriting_uncommitted_work() {
 
     std::fs::write(repo.join("shared.txt"), "the operator was editing this\n").unwrap();
 
-    let landed = manager.land(&repo, "main", &before).await.unwrap();
+    let landed = manager.land(&repo, "main").await.unwrap();
     match landed {
         deck_core::git::LandOutcome::Refused { reason } => {
             assert!(reason.contains("uncommitted"), "unhelpful reason: {reason}")
@@ -340,9 +340,9 @@ async fn landing_refuses_rather_than_overwriting_uncommitted_work() {
 }
 
 #[tokio::test]
-async fn landing_refuses_when_the_branch_moved_underneath_the_run() {
-    // The integration was never tested against whatever arrived in the meantime, so
-    // fast-forwarding past it would be asserting something nothing checked.
+async fn landing_refuses_when_the_branch_has_commits_the_integration_lacks() {
+    // Landing here would have to discard the operator's commit, which is never the right call —
+    // the integration was built before that commit existed and was never tested against it.
     let repo = scratch_repo("land-moved");
     let a = branch_with(&repo, "agent-a", "one.txt", "one\n");
     let before = head_of(&repo, "main");
@@ -361,10 +361,13 @@ async fn landing_refuses_when_the_branch_moved_underneath_the_run() {
     sh(&repo, &["add", "."]);
     sh(&repo, &["commit", "-q", "-m", "human work"]);
 
-    let landed = manager.land(&repo, "main", &before).await.unwrap();
+    let landed = manager.land(&repo, "main").await.unwrap();
     match landed {
         deck_core::git::LandOutcome::Refused { reason } => {
-            assert!(reason.contains("moved"), "unhelpful reason: {reason}")
+            assert!(
+                reason.contains("would discard them"),
+                "unhelpful reason: {reason}"
+            )
         }
         other => panic!("expected a refusal, got {other:?}"),
     }

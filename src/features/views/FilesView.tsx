@@ -30,6 +30,9 @@ export function FilesView({ project }: { project: string | null }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [landing, setLanding] = useState(false);
+  const [landed, setLanded] = useState<string | null>(null);
 
   const loadDir = useCallback(async (rel: string) => {
     try {
@@ -40,13 +43,22 @@ export function FilesView({ project }: { project: string | null }) {
     }
   }, []);
 
+  const checkPending = useCallback(async () => {
+    try {
+      setPending(await invoke<boolean>("pending_integration"));
+    } catch {
+      setPending(false);
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
+    void checkPending();
     setChildren({});
     setOpen(new Set());
     setSelected(null);
     setContent(null);
     await loadDir("");
-  }, [loadDir]);
+  }, [loadDir, checkPending]);
 
   useEffect(() => {
     void refresh();
@@ -91,6 +103,44 @@ export function FilesView({ project }: { project: string | null }) {
         </Button>
       </div>
 
+      {/* Placed here because this is the screen where its absence is felt: work that integrated
+          but never landed leaves the folder looking as though the run produced nothing. */}
+      {pending && (
+        <div className="flex items-center gap-3 rounded-[var(--radius-panel)] border border-deck-live/30 bg-deck-live/[0.07] px-3.5 py-2.5">
+          <div className="flex min-w-0 grow flex-col gap-0.5">
+            <span className="text-[12.5px] font-medium text-deck-text">
+              There is integrated work that is not in this folder yet
+            </span>
+            <span className="text-[11.5px] leading-relaxed text-deck-faint">
+              A run merged its branches and verified them, but stopped before landing — usually
+              because it is still going, or a review needed you. Landing will not overwrite
+              uncommitted changes or discard your own commits.
+            </span>
+          </div>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={landing}
+            onClick={async () => {
+              setLanding(true);
+              setError(null);
+              setLanded(null);
+              try {
+                setLanded(await invoke<string>("land_integration"));
+                await refresh();
+              } catch (e) {
+                setError(String(e));
+              } finally {
+                setLanding(false);
+              }
+            }}
+          >
+            {landing ? "Landing…" : "Land it"}
+          </Button>
+        </div>
+      )}
+
+      {landed && <p className="text-[11.5px] text-deck-done">{landed}</p>}
       {error && <p className="text-[11.5px] text-deck-danger">{error}</p>}
 
       <div className="flex min-h-0 grow gap-4">

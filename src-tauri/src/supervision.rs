@@ -37,12 +37,6 @@ pub struct LiveWorkspaces {
     runtime_dir: PathBuf,
     /// Base branch new worktrees start from.
     base_ref: String,
-    /// Where that branch stood when the run began.
-    ///
-    /// Captured once rather than read at landing time: the check is whether the branch moved
-    /// under us, and reading it fresh at the moment of comparison would answer that question
-    /// with itself.
-    base_sha: parking_lot::Mutex<Option<String>>,
     model: Option<String>,
     /// Durable records of what is running, so a crash leaves evidence rather than orphans.
     store: Store,
@@ -79,7 +73,6 @@ impl LiveWorkspaces {
             mcp_binary: mcp_binary_path(),
             runtime_dir: PathBuf::from("/tmp"),
             base_ref,
-            base_sha: parking_lot::Mutex::new(None),
             model: None,
             store,
             boot,
@@ -87,13 +80,6 @@ impl LiveWorkspaces {
             policy: deck_core::permission::worker_defaults(),
             accepts_edits: true,
             knowledge: None,
-        }
-    }
-
-    /// Records where the base branch stood, so landing can tell whether it has since moved.
-    pub async fn record_base_sha(&self) {
-        if let Ok(sha) = deck_core::git::head_sha(self.registry.repo(), &self.base_ref).await {
-            *self.base_sha.lock() = Some(sha);
         }
     }
 
@@ -303,15 +289,9 @@ impl Workspaces for LiveWorkspaces {
     }
 
     async fn land(&self) -> deck_core::git::LandOutcome {
-        let Some(base_sha) = self.base_sha.lock().clone() else {
-            return deck_core::git::LandOutcome::Refused {
-                reason: "the run never recorded where the branch started".into(),
-            };
-        };
-
         self.registry
             .worktrees()
-            .land(self.registry.repo(), &self.base_ref, &base_sha)
+            .land(self.registry.repo(), &self.base_ref)
             .await
             .unwrap_or_else(|e| deck_core::git::LandOutcome::Refused {
                 reason: e.to_string(),

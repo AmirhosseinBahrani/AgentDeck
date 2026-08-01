@@ -245,12 +245,7 @@ impl WorktreeManager {
     ///
     /// Every refusal leaves the integration worktree intact, so nothing is lost and the operator
     /// can merge by hand.
-    pub async fn land(
-        &self,
-        repo: &Path,
-        base_ref: &str,
-        expected_base_sha: &str,
-    ) -> Result<LandOutcome> {
+    pub async fn land(&self, repo: &Path, base_ref: &str) -> Result<LandOutcome> {
         let root = repo_root(repo).await?;
         let lock = self.locks_for(&root);
         let _guard = lock.lock().await;
@@ -264,19 +259,33 @@ impl WorktreeManager {
 
         let integrated = git(&path, &["rev-parse", "HEAD"]).await?.trim().to_string();
 
-        // Read from the repository rather than assumed: the operator may have committed while the
-        // run was going, and the integration was not tested against that.
+        // Ancestry rather than a remembered sha. The question that matters is whether
+        // fast-forwarding would lose a commit, and git answers that directly — a recorded sha only
+        // answers "is this identical to when we started", which is stricter and different. It also
+        // lets work be landed long after the run that produced it, which is exactly the case that
+        // matters when a run blocks and its output is stranded in the integration worktree.
         let current = git(&root, &["rev-parse", base_ref])
             .await?
             .trim()
             .to_string();
-        if current != expected_base_sha {
+
+        if current == integrated {
+            return Ok(LandOutcome::Refused {
+                reason: format!("{base_ref} is already at the integrated commit"),
+            });
+        }
+
+        if git(
+            &root,
+            &["merge-base", "--is-ancestor", &current, &integrated],
+        )
+        .await
+        .is_err()
+        {
             return Ok(LandOutcome::Refused {
                 reason: format!(
-                    "{base_ref} moved while the run was going (expected {}, found {}); \
-                     merge the integration worktree by hand",
-                    &expected_base_sha[..expected_base_sha.len().min(8)],
-                    &current[..current.len().min(8)]
+                    "{base_ref} has commits the integration does not contain, so landing would \
+                     discard them; merge the integration worktree by hand"
                 ),
             });
         }

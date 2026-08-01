@@ -11,7 +11,7 @@ use crate::contract::{
 use crate::decision::*;
 use crate::escalation::{AnswerQueue, Escalation, EscalationAnswer, EscalationKind, NoAnswers};
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
-use crate::guidance::{Guidance, GuidanceQueue, NoGuidance, NoTasks, RequestedTask, TaskQueue};
+use crate::guidance::{Guidance, GuidanceQueue, NoGuidance, NoTasks, TaskQueue};
 use crate::loop_engine::*;
 use crate::planner::{Decisions, Planner};
 use crate::workspaces::{render_brief, DispatchRequest, NoReports, ReportQueue, Workspaces};
@@ -413,6 +413,130 @@ impl<'a> Driver<'a> {
     // -----------------------------------------------------------------------
     // Reap — pure: notices agents that died without saying anything
     // -----------------------------------------------------------------------
+
+    /// Turns a reviewer's findings into work for whoever can act on them.
+    ///
+    /// D6. The alternative — escalating every failed review to the operator — makes a person the
+    /// router for every defect the team finds about itself, which is precisely the job the
+    /// supervisor exists to do. It still escalates when the answer is not usable, because a fix
+    /// aimed at the wrong role is worse than a question.
+    async fn route_fix(
+        &self,
+        run: &mut Run,
+        reviewed: TaskId,
+        findings: &[String],
+        decisions: &Decisions<'_>,
+    ) {
+        let title = run
+            .titles
+            .get(&reviewed)
+            .cloned()
+            .unwrap_or_else(|| reviewed.to_string());
+        let roles = self.config.roles();
+
+        let prompt = format!(
+            "A review failed and the work needs fixing. Describe the single task that would \
+             resolve it.\n\n\
+             Reviewed task: {title}\n\
+             Findings:\n{}\n\n\
+             Choose the role that owns the thing that is actually wrong — which is often not the \
+             role that was reviewed. Give a command that would prove the fix worked, if one \
+             exists.\n",
+            findings
+                .iter()
+                .map(|f| format!("- {f}\n"))
+                .collect::<String>()
+        );
+
+        let proposed = decisions
+            .fix_task(
+                prompt,
+                fix_task_schema(&roles),
+                self.config.per_call_budget_usd,
+            )
+            .await;
+
+        let Ok((fix, cost)) = proposed else {
+            self.escalate_unrouted(run, reviewed, &title, findings);
+            return;
+        };
+
+        let faults = validate_fix_task(&fix, &roles);
+        if !faults.is_empty() {
+            run.log.record_model_decision(
+                run.state.iteration,
+                Stage::Failures,
+                "fix_task",
+                "",
+                faults,
+                0,
+                cost,
+            );
+            self.escalate_unrouted(run, reviewed, &title, findings);
+            return;
+        }
+
+        let id = TaskId::new();
+        let mut contract = TaskContract {
+            definition_of_done: fix.description.clone(),
+            ..Default::default()
+        };
+        if !fix.verify_command.trim().is_empty() {
+            contract.acceptance_criteria.push(Criterion {
+                id: "fix-check".into(),
+                text: format!("`{}` succeeds", fix.verify_command.trim()),
+                verify: Verification::Command {
+                    cmd: fix.verify_command.trim().to_string(),
+                    cwd_rel: None,
+                    expect_exit_zero: true,
+                },
+            });
+        }
+        validate_and_repair(&mut contract, self.config.default_test_command.as_deref());
+
+        let state = TaskState {
+            id,
+            // Gating on it, because the objective is not met while a review says it is broken.
+            // This is the one place an added task should hold the run open.
+            objective_gate: true,
+            ..TaskState::new(id)
+        };
+
+        if run
+            .graph
+            .apply(Mutation {
+                add_tasks: vec![state],
+                add_edges: Vec::new(),
+            })
+            .is_err()
+        {
+            self.escalate_unrouted(run, reviewed, &title, findings);
+            return;
+        }
+
+        run.contracts.insert(id, contract);
+        run.roles.insert(id, fix.role.clone());
+        run.titles.insert(id, fix.title.clone());
+        run.log.record_model_decision(
+            run.state.iteration,
+            Stage::Failures,
+            "fix_task",
+            &format!("routed to {}: {}", fix.role, fix.title),
+            Vec::new(),
+            0,
+            cost,
+        );
+    }
+
+    /// When the supervisor cannot work out who should fix something, it asks.
+    fn escalate_unrouted(&self, run: &mut Run, reviewed: TaskId, title: &str, findings: &[String]) {
+        run.escalate(
+            EscalationKind::TaskBlocked,
+            Some(reviewed),
+            format!("\u{201c}{title}\u{201d} failed review and the fix is not obvious"),
+            findings.join("; "),
+        );
+    }
 
     /// Folds operator-added tasks into the graph.
     ///
@@ -1046,7 +1170,8 @@ impl<'a> Driver<'a> {
              - Mark every task that the objective cannot be considered complete without as \
                objective_gate.\n\
              - Give each task acceptance criteria that can be checked by running a command.\n\
-             - Use tmp_id values to express dependencies; they must not form a cycle.\n",
+             - Use tmp_id values to express dependencies; they must not form a cycle.\n\
+",
             self.config.objective,
             roles.join(", "),
         );
@@ -1537,9 +1662,28 @@ impl<'a> Driver<'a> {
             };
 
             if let Some(event) = event {
+                // Taken from the event rather than the response: the event is what actually
+                // moved the task, so a findings list that disagreed with it could not happen.
+                let failed_review = match &event {
+                    TaskEvent::ReviewFailed { reason } => Some(reason.clone()),
+                    _ => None,
+                };
                 if let Some(current) = run.graph.get(task_id).cloned() {
                     if let Ok(next) = apply(&current, event) {
+                        let now_failed = next.status == TaskStatus::Failed;
                         run.graph.set_state(next);
+
+                        // A review that failed for good is a finding with nowhere to go. Sending
+                        // it back to the same task is only useful when that task owns the thing
+                        // that is wrong — and it often does not: a reviewer judging someone
+                        // else's deliverable can report the defect and can never repair it. The
+                        // supervisor routes the finding to whoever can, and asks the operator
+                        // only when it cannot work out who that is.
+                        if let (Some(reason), true) = (failed_review, now_failed) {
+                            let findings: Vec<String> =
+                                reason.split("; ").map(str::to_string).collect();
+                            self.route_fix(run, task_id, &findings, &decisions).await;
+                        }
                     }
                 }
             } else {

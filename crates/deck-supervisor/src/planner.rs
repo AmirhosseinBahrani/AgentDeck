@@ -93,6 +93,26 @@ impl<'a> Decisions<'a> {
         Ok((choice, response.cost_usd))
     }
 
+    /// D6 — what to do about a review's findings.
+    pub async fn fix_task(
+        &self,
+        prompt: String,
+        schema: serde_json::Value,
+        budget: f64,
+    ) -> Result<(crate::decision::FixTask, Option<f64>), PlannerError> {
+        let response = self
+            .planner
+            .call(ModelCall {
+                prompt,
+                schema,
+                max_budget_usd: budget,
+            })
+            .await?;
+        let parsed: crate::decision::FixTask = serde_json::from_value(response.structured)
+            .map_err(|e| PlannerError::Parse(e.to_string()))?;
+        Ok((parsed, response.cost_usd))
+    }
+
     pub async fn review(
         &self,
         prompt: String,

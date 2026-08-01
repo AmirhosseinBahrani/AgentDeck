@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { History, Play, RotateCcw, Square, UserPlus } from "lucide-react";
+import { History, Loader2, Play, RotateCcw, Square, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -106,7 +106,45 @@ export function TeamView({
     }
   }
 
-  /** Returns to the start screen, which is also where earlier runs are listed. */
+  /**
+ * Shown between pressing Start and the first task existing.
+ *
+ * That gap is one model call and can run to the better part of a minute, and until it returns
+ * there is genuinely nothing to draw: no tasks, no agent doing anything. An empty graph is an
+ * accurate picture of that state and a completely misleading one, because it is identical to a
+ * run that failed to start. The elapsed count is what separates the two — it says the app is
+ * still with you, and gives you the evidence to decide when it is not.
+ */
+function PlanningNotice({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const seconds = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+
+  return (
+    <div className="flex items-center gap-3 rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.025] px-4 py-3.5">
+      <Loader2 className="size-4 shrink-0 animate-spin text-deck-live" />
+      <div className="flex min-w-0 grow flex-col gap-0.5">
+        <span className="text-[12.5px] font-medium text-deck-text">
+          Breaking the objective into tasks
+        </span>
+        <span className="text-[11.5px] leading-relaxed text-deck-faint">
+          One planning call to Claude. Agents start the moment it returns — usually under a
+          minute.
+        </span>
+      </div>
+      <span className="shrink-0 font-mono text-[11px] tabular-nums text-deck-faint">
+        {seconds}s
+      </span>
+    </div>
+  );
+}
+
+/** Returns to the start screen, which is also where earlier runs are listed. */
   async function newRun() {
     try {
       await invoke("clear_run");
@@ -270,11 +308,15 @@ export function TeamView({
               label="Task graph"
               trailing={`${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
             />
-            <TaskGraph
-              tasks={tasks}
-              edges={snapshot?.edges ?? []}
-              onOpenSession={(id) => onOpenSession(id)}
-            />
+            {running && tasks.length === 0 ? (
+              <PlanningNotice startedAt={snapshot?.started_at_ms ?? 0} />
+            ) : (
+              <TaskGraph
+                tasks={tasks}
+                edges={snapshot?.edges ?? []}
+                onOpenSession={(id) => onOpenSession(id)}
+              />
+            )}
           </section>
         </div>
 

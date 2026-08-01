@@ -12,6 +12,8 @@ import { DecisionsView } from "./features/views/DecisionsView";
 import { DiffsView } from "./features/views/DiffsView";
 import { SupervisorView } from "./features/views/SupervisorView";
 import { TaskGraphView } from "./features/views/TaskGraphView";
+import { MemoryView } from "./features/views/MemoryView";
+import { SkillsView } from "./features/views/SkillsView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import { useEventPump, usePumpStats, useSessionSubscriptions } from "./hooks/useEventPump";
 import type { ProjectInfo, RunSnapshot } from "./lib/types";
@@ -87,6 +89,8 @@ function Deck() {
         onChangeProject={() => void picker.pick()}
         autonomy={snapshot?.autonomy || "assisted"}
         running={!!snapshot?.active}
+        phase={snapshot?.phase ?? ""}
+        startedAt={snapshot?.started_at_ms ?? 0}
       />
 
       {/* Outside both views: an agent can block while the operator is looking elsewhere, and a
@@ -143,6 +147,18 @@ function Deck() {
       {view === "supervisor" && (
         <div className="min-h-0 flex-1">
           <SupervisorView snapshot={snapshot} />
+        </div>
+      )}
+
+      {view === "memory" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <MemoryView />
+        </div>
+      )}
+
+      {view === "skills" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <SkillsView />
         </div>
       )}
 

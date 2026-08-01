@@ -11,7 +11,15 @@ import { cn } from "../../lib/utils";
  * `ready` stays in the shape even with every tab built: a tab that is present but does nothing
  * reads as a bug, so anything added ahead of its backend says so rather than pretending.
  */
-export type NavTab = "team" | "workspace" | "graph" | "diffs" | "decisions" | "supervisor";
+export type NavTab =
+  | "team"
+  | "workspace"
+  | "graph"
+  | "diffs"
+  | "decisions"
+  | "supervisor"
+  | "memory"
+  | "skills";
 
 const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
   { id: "team", label: "Team", ready: true },
@@ -20,6 +28,8 @@ const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
   { id: "diffs", label: "Diffs", ready: true },
   { id: "decisions", label: "Decisions", ready: true },
   { id: "supervisor", label: "Supervisor", ready: true },
+  { id: "memory", label: "Memory", ready: true },
+  { id: "skills", label: "Skills", ready: true },
 ];
 
 export function NavTabs({

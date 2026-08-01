@@ -195,6 +195,15 @@ export interface AgentSummary {
   review_rounds: number;
 }
 
+/** A named procedure every agent is given at spawn. */
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  body: string;
+  enabled: boolean;
+}
+
 /** A session that has already run, listed so its transcript stays readable after the run ends. */
 export interface SessionHistoryEntry {
   session_id: string;

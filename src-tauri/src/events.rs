@@ -317,15 +317,31 @@ pub async fn start_supervisor_run(
         triggers.clone(),
     ));
 
-    let workspaces = std::sync::Arc::new(crate::supervision::LiveWorkspaces::new(
-        state.workspaces.read().clone(),
-        state.bus.clone(),
-        "main".into(),
-        sink,
-        state.store.clone(),
-        state.boot.clone(),
-        identity.clone(),
-    ));
+    // Read once, here, so every agent this run dispatches is told the same thing even if the
+    // operator edits the notes while it is going.
+    let knowledge = {
+        use deck_core::store::knowledge;
+        let memory = knowledge::memory(&state.store, &identity.project_id)
+            .await
+            .unwrap_or_default();
+        let skills = knowledge::skills(&state.store, &identity.project_id)
+            .await
+            .unwrap_or_default();
+        knowledge::render_for_prompt(&memory, &skills)
+    };
+
+    let workspaces = std::sync::Arc::new(
+        crate::supervision::LiveWorkspaces::new(
+            state.workspaces.read().clone(),
+            state.bus.clone(),
+            "main".into(),
+            sink,
+            state.store.clone(),
+            state.boot.clone(),
+            identity.clone(),
+        )
+        .with_knowledge(knowledge),
+    );
     let planner = crate::supervision::CliPlanner::new(repo);
 
     // Agent activity wakes the loop. Without this the run would only advance on the tick, which
@@ -994,6 +1010,92 @@ pub struct ResumableSummary {
     /// False once the worktree is gone, which makes the conversation permanently unreachable.
     /// Shown up front rather than discovered when a resume fails.
     pub resumable: bool,
+}
+
+// --- project knowledge -----------------------------------------------------------------------
+
+/// A named procedure the team is given at spawn.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillDto {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub body: String,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub async fn get_project_memory(state: State<'_, AppState>) -> Result<String, String> {
+    let project_id = state.identity.read().project_id.clone();
+    deck_core::store::knowledge::memory(&state.store, &project_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn save_project_memory(
+    state: State<'_, AppState>,
+    content: String,
+) -> Result<(), String> {
+    let project_id = state.identity.read().project_id.clone();
+    deck_core::store::knowledge::save_memory(&state.store, &project_id, &content)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillDto>, String> {
+    let project_id = state.identity.read().project_id.clone();
+    Ok(
+        deck_core::store::knowledge::skills(&state.store, &project_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|s| SkillDto {
+                id: s.id,
+                name: s.name,
+                description: s.description,
+                body: s.body,
+                enabled: s.enabled,
+            })
+            .collect(),
+    )
+}
+
+/// Creates or replaces a skill, returning its id.
+#[tauri::command]
+pub async fn save_skill(state: State<'_, AppState>, skill: SkillDto) -> Result<String, String> {
+    // Refused rather than stored. The name is the only handle the operator has on a skill and the
+    // key it is saved under, so an unnamed one would be unreachable and silently duplicate on the
+    // next save.
+    if skill.name.trim().is_empty() {
+        return Err("A skill needs a name.".into());
+    }
+
+    let project_id = state.identity.read().project_id.clone();
+    deck_core::store::knowledge::save_skill(
+        &state.store,
+        &project_id,
+        &deck_core::store::knowledge::Skill {
+            id: skill.id,
+            name: skill.name.trim().to_string(),
+            description: skill.description,
+            body: skill.body,
+            enabled: skill.enabled,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_skill(state: State<'_, AppState>, skill_id: String) -> Result<bool, String> {
+    deck_core::store::knowledge::delete_skill(&state.store, &skill_id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// A session that has already run, as the history list renders it.

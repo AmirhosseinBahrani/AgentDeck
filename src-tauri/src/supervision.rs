@@ -42,6 +42,12 @@ pub struct LiveWorkspaces {
     store: Store,
     boot: BootId,
     identity: LocalIdentity,
+    /// The operator's notes and enabled skills, rendered once per run.
+    ///
+    /// Snapshotted at run start rather than read per dispatch: agents dispatched by the same run
+    /// must be told the same thing, or two workers reach contradictory conclusions about the
+    /// project and the difference is invisible in both their transcripts.
+    knowledge: Option<String>,
 }
 
 impl LiveWorkspaces {
@@ -67,7 +73,14 @@ impl LiveWorkspaces {
             store,
             boot,
             identity,
+            knowledge: None,
         }
+    }
+
+    /// Sets the standing project knowledge every agent this run spawns will be given.
+    pub fn with_knowledge(mut self, knowledge: Option<String>) -> Self {
+        self.knowledge = knowledge;
+        self
     }
 
     /// Force-kills one agent.
@@ -119,9 +132,11 @@ impl Workspaces for LiveWorkspaces {
                 task_id: request.task_id,
                 task_title: &request.task_title,
                 base_ref: &self.base_ref,
-                // The role prompt; the task brief goes as the first message so it appears in the
-                // transcript the operator reads rather than being hidden in the system prompt.
-                system_prompt: None,
+                // Standing project knowledge. The task brief goes as the first message instead,
+                // so it appears in the transcript the operator reads rather than being hidden in
+                // the system prompt — but notes and skills are true of every task and would be
+                // noise repeated in each brief.
+                system_prompt: self.knowledge.as_deref(),
                 model: self.model.as_deref(),
                 extra_layers: vec![],
             })

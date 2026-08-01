@@ -185,3 +185,64 @@ fn personal_skills_are_found_but_arrive_switched_off() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[tokio::test]
+async fn model_choices_round_trip_and_blank_means_the_cli_default() {
+    // The empty string arrives from a UI radio whose "CLI default" option carries no id. Storing
+    // it verbatim would pass `--model ""` to the CLI, which is not the same as not passing it.
+    let (store, project_id) = project().await;
+
+    assert_eq!(
+        knowledge::models(&store, &project_id).await.unwrap(),
+        knowledge::ModelSettings::default(),
+        "a project that never chose follows the CLI"
+    );
+
+    knowledge::save_models(
+        &store,
+        &project_id,
+        &knowledge::ModelSettings {
+            worker: Some("claude-haiku-4-5-20251001".into()),
+            supervisor: Some("  ".into()),
+        },
+    )
+    .await
+    .unwrap();
+
+    let saved = knowledge::models(&store, &project_id).await.unwrap();
+    assert_eq!(saved.worker.as_deref(), Some("claude-haiku-4-5-20251001"));
+    assert_eq!(
+        saved.supervisor, None,
+        "blank is absent, not an empty model id"
+    );
+}
+
+#[tokio::test]
+async fn a_permission_level_round_trips_and_blank_prefixes_are_dropped() {
+    let (store, project_id) = project().await;
+
+    assert_eq!(
+        knowledge::permissions(&store, &project_id)
+            .await
+            .unwrap()
+            .level,
+        deck_core::permission::PermissionLevel::Standard,
+        "not having chosen means the middle setting"
+    );
+
+    knowledge::save_permissions(
+        &store,
+        &project_id,
+        &knowledge::PermissionSettings {
+            level: deck_core::permission::PermissionLevel::Trusted,
+            // A blank prefix matches every command, so it must never reach the policy.
+            extra_bash: vec!["make test".into(), "   ".into()],
+        },
+    )
+    .await
+    .unwrap();
+
+    let saved = knowledge::permissions(&store, &project_id).await.unwrap();
+    assert_eq!(saved.level, deck_core::permission::PermissionLevel::Trusted);
+    assert_eq!(saved.extra_bash, vec!["make test".to_string()]);
+}

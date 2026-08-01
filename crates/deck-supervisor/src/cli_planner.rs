@@ -33,6 +33,12 @@ impl CliPlanner {
             model: None,
         }
     }
+
+    /// Pins the model used for every supervisor decision on this run.
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model.filter(|m| !m.trim().is_empty());
+        self
+    }
 }
 
 #[async_trait::async_trait]

@@ -83,6 +83,12 @@ impl LiveWorkspaces {
         }
     }
 
+    /// Pins the model every agent this run spawns will use.
+    pub fn with_model(mut self, model: Option<String>) -> Self {
+        self.model = model.filter(|m| !m.trim().is_empty());
+        self
+    }
+
     /// Sets the permission posture every agent this run spawns will work under.
     pub fn with_policy(
         mut self,

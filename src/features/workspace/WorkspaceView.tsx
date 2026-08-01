@@ -79,22 +79,6 @@ export function WorkspaceView({
     }
   }
 
-  /**
-   * Replays a captured session.
-   *
-   * Kept reachable because it is the only way to exercise the transcript without an
-   * authenticated CLI or spending the account's rate limit — the entrance for anyone working on
-   * this screen, and the demo path when there is no run.
-   */
-  async function replay(name: string) {
-    try {
-      const id = await invoke<string>("replay_fixture", { name });
-      onSelect(id);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
   async function kill(taskId: string) {
     try {
       await invoke<boolean>("force_kill_agent", { taskId });
@@ -161,7 +145,11 @@ export function WorkspaceView({
         )}
 
         <div className="min-h-0 grow">
-          {active ? <TranscriptView sessionId={active} /> : <NoSession onReplay={replay} />}
+          {active ? (
+            <TranscriptView sessionId={active} />
+          ) : (
+            <NoSession history={history} onOpen={onSelect} />
+          )}
         </div>
       </main>
 
@@ -315,30 +303,53 @@ function TaskDetail({
   );
 }
 
-function NoSession({ onReplay }: { onReplay: (name: string) => void }) {
-  const [fixtures, setFixtures] = useState<string[]>([]);
-
-  useEffect(() => {
-    void invoke<string[]>("list_fixtures")
-      .then(setFixtures)
-      .catch(() => {});
-  }, []);
+/**
+ * What to offer when nothing is open.
+ *
+ * This used to list the recorded protocol fixtures. They exist to develop the transcript renderer
+ * without an authenticated CLI, which is a real need — but it is a need of whoever is working on
+ * this screen, not of whoever is running a team, and putting four internal test names in front of
+ * every operator implied they were something to use. Recent sessions are what the space is
+ * actually for: picking up where you left off is the ordinary reason to be here with nothing open.
+ */
+function NoSession({
+  history,
+  onOpen,
+}: {
+  history: SessionHistoryEntry[];
+  onOpen: (sessionId: string) => void;
+}) {
+  const recent = history.slice(0, 6);
 
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-4 px-8">
+    <div className="flex h-full flex-col items-center justify-center gap-5 px-8">
       <div className="max-w-md text-center">
         <p className="text-[13px] text-deck-dim">No session open.</p>
         <p className="mt-1 text-[11.5px] leading-relaxed text-deck-faint">
-          Pick an agent from the roster to read what it is doing, or replay a captured session —
-          no CLI and no rate limit needed.
+          {recent.length > 0
+            ? "Pick an agent from the roster to watch it work, or reopen one of these."
+            : "Pick an agent from the roster to read what it is doing. Sessions you have run appear here once there are some."}
         </p>
       </div>
-      {fixtures.length > 0 && (
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {fixtures.map((name) => (
-            <Button key={name} variant="secondary" size="sm" onClick={() => onReplay(name)}>
-              {name}
-            </Button>
+
+      {recent.length > 0 && (
+        <div className="flex w-full max-w-md flex-col gap-1">
+          {recent.map((entry) => (
+            <button
+              key={entry.session_id}
+              onClick={() => onOpen(entry.session_id)}
+              className="flex items-center gap-3 rounded-md border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-left transition-colors hover:bg-white/[0.05]"
+            >
+              <span className="shrink-0 text-[12.5px] font-medium text-deck-text">
+                {entry.agent_name}
+              </span>
+              <span className="min-w-0 grow truncate text-[11.5px] text-deck-faint">
+                {entry.task_title ?? "no task"}
+              </span>
+              <span className="shrink-0 font-mono text-[10.5px] text-deck-faint">
+                {entry.status}
+              </span>
+            </button>
           ))}
         </div>
       )}

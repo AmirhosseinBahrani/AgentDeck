@@ -766,6 +766,114 @@ pub async fn init_project(state: State<'_, AppState>, path: String) -> Result<Pr
     get_project(state).await
 }
 
+/// Where new projects go unless the operator picks somewhere else.
+fn default_project_parent() -> std::path::PathBuf {
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("AgentDeck")
+}
+
+#[tauri::command]
+pub fn suggest_project_location(name: String) -> String {
+    default_project_parent()
+        .join(slug_for_directory(&name))
+        .display()
+        .to_string()
+}
+
+/// A directory name derived from what the operator typed.
+///
+/// Every path separator and dot segment is dropped rather than escaped. This value is joined onto
+/// a parent directory, so a name containing `../` would place the new repository somewhere the
+/// operator never chose — and the first thing that happens to it is `git init`.
+fn slug_for_directory(name: &str) -> String {
+    let slug: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let slug = slug.trim_matches('-').to_string();
+    let mut collapsed = String::with_capacity(slug.len());
+    let mut last_dash = false;
+    for c in slug.chars() {
+        if c == '-' {
+            if !last_dash {
+                collapsed.push(c);
+            }
+            last_dash = true;
+        } else {
+            collapsed.push(c);
+            last_dash = false;
+        }
+    }
+    collapsed
+}
+
+/// Creates a new repository and makes it the active project.
+///
+/// Creating rather than adopting: until now the only way in was a folder picker over directories
+/// that already existed, so starting something new meant leaving the app, making a folder, running
+/// `git init`, and coming back.
+#[tauri::command]
+pub async fn create_project(
+    state: State<'_, AppState>,
+    name: String,
+    parent: Option<String>,
+) -> Result<ProjectInfo, String> {
+    let slug = slug_for_directory(&name);
+    if slug.is_empty() {
+        return Err("That name has no letters or numbers in it.".into());
+    }
+
+    let parent = parent
+        .filter(|p| !p.trim().is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(default_project_parent);
+    let path = parent.join(&slug);
+
+    // Refused rather than merged into. The next steps are `git init` and handing the directory to
+    // agents with edit permission, and doing that to a folder the operator forgot about is not
+    // recoverable from inside this app.
+    if path.exists() {
+        let occupied = std::fs::read_dir(&path)
+            .map(|mut entries| entries.next().is_some())
+            .unwrap_or(true);
+        if occupied {
+            return Err(format!(
+                "{} already exists and is not empty. Add it as an existing project instead.",
+                path.display()
+            ));
+        }
+    }
+
+    std::fs::create_dir_all(&path)
+        .map_err(|e| format!("could not create {}: {e}", path.display()))?;
+
+    // Gives the initial commit something to describe and the agents somewhere obvious to start.
+    let readme = path.join("README.md");
+    if !readme.exists() {
+        let _ = std::fs::write(
+            &readme,
+            format!(
+                "# {}
+",
+                name.trim()
+            ),
+        );
+    }
+
+    deck_core::store::identity::initialize_repository(&path).await?;
+    state.open_project(path).await?;
+    get_project(state).await
+}
+
 /// Every repository this workspace knows about.
 #[tauri::command]
 pub async fn list_projects(
@@ -1493,5 +1601,36 @@ fn snapshot_of(
         open_escalations: run.state.open_escalations,
         tasks,
         decisions,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::slug_for_directory;
+
+    #[test]
+    fn a_name_cannot_escape_the_parent_directory() {
+        // This value is joined onto a directory the operator chose, and what happens to the
+        // result is `git init` followed by handing it to agents with edit permission. A name that
+        // resolved upward would create a repository somewhere nobody picked.
+        assert_eq!(slug_for_directory("../../etc"), "etc");
+        assert_eq!(slug_for_directory("/absolute/path"), "absolute-path");
+        assert_eq!(slug_for_directory(".."), "");
+        assert_eq!(slug_for_directory("~/secrets"), "secrets");
+    }
+
+    #[test]
+    fn a_readable_name_becomes_a_readable_directory() {
+        assert_eq!(slug_for_directory("My New App"), "my-new-app");
+        assert_eq!(slug_for_directory("  spaced  out  "), "spaced-out");
+        assert_eq!(slug_for_directory("emoji 🚀 name"), "emoji-name");
+    }
+
+    #[test]
+    fn a_name_with_nothing_usable_in_it_is_empty_rather_than_a_guess() {
+        // The caller refuses on empty. Inventing a fallback name would put a repository somewhere
+        // the operator could not predict from what they typed.
+        assert_eq!(slug_for_directory("!!!"), "");
+        assert_eq!(slug_for_directory(""), "");
     }
 }

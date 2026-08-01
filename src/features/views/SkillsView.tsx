@@ -16,7 +16,7 @@ const BLANK: Skill = { id: "", name: "", description: "", body: "", enabled: tru
  * a skill costs prompt tokens on every single spawn, so a library only stays affordable if the
  * ones that do not apply to the current work can be turned off without being deleted.
  */
-export function SkillsView() {
+export function SkillsView({ project }: { project: string | null }) {
   const [skills, setSkills] = useState<Skill[]>([]);
   const [draft, setDraft] = useState<Skill | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,9 +30,12 @@ export function SkillsView() {
     }
   }, []);
 
+  // Reloaded when the project changes: skills belong to a repository, and carrying one project's
+  // list into another would let an operator toggle a skill they cannot see the effect of.
   useEffect(() => {
+    setDraft(null);
     void load();
-  }, [load]);
+  }, [load, project]);
 
   async function save(skill: Skill) {
     setBusy(true);
@@ -65,8 +68,12 @@ export function SkillsView() {
       <div className="flex w-[300px] shrink-0 flex-col gap-3">
         <SectionRule
           label="Skills"
-          trailing={skills.length ? `${enabled}/${skills.length} on` : undefined}
+          trailing={skills.length ? `${enabled}/${skills.length} on` : (project ?? undefined)}
         />
+        <p className="text-[11px] leading-relaxed text-deck-faint">
+          Stored on <span className="text-deck-dim">{project ?? "no project"}</span>. Enabled
+          skills go into every agent's system prompt when a run starts.
+        </p>
 
         <div className="flex min-h-0 grow flex-col gap-1 overflow-y-auto">
           {skills.length === 0 && (

@@ -15,6 +15,10 @@ use deck_core::store::processes::{self, BootId, ProcessRecord};
 use deck_core::store::{sessions, Store};
 use deck_core::workspace::{PrepareRequest, WorkspaceRegistry};
 use deck_supervisor::workspaces::{DispatchError, DispatchRequest, DispatchedAgent, Workspaces};
+
+// The planner lives in deck-supervisor: it is a Planner implementation with no Tauri
+// dependency, and keeping it there is what lets an integration test drive a real CLI call.
+pub use deck_supervisor::cli_planner::CliPlanner;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -265,92 +269,6 @@ impl Workspaces for LiveWorkspaces {
             .unwrap_or_else(|e| deck_core::git::IntegrationOutcome::Inconclusive {
                 reason: e.to_string(),
             })
-    }
-}
-
-/// Consults Claude via a one-shot CLI invocation per decision.
-///
-/// Mirrors the runtime constraints proven in the M0 spike: `--verbose` is mandatory with
-/// stream-json, settings are pinned so the supervisor never inherits the developer's plugins or
-/// hooks, and `--json-schema` does the shape validation before our own ladder runs.
-///
-/// Tools are disabled outright. The supervisor reasons; it does not act. Anything it needs to know
-/// about the repository is assembled into the prompt by code, which is what keeps its inputs
-/// inspectable and its decisions replayable.
-pub struct CliPlanner {
-    program: String,
-    cwd: PathBuf,
-    model: Option<String>,
-}
-
-impl CliPlanner {
-    pub fn new(cwd: PathBuf) -> Self {
-        Self {
-            program: "claude".into(),
-            cwd,
-            model: None,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl deck_supervisor::planner::Planner for CliPlanner {
-    async fn call(
-        &self,
-        call: deck_supervisor::planner::ModelCall,
-    ) -> Result<deck_supervisor::planner::ModelResponse, deck_supervisor::planner::PlannerError>
-    {
-        use deck_supervisor::planner::{ModelResponse, PlannerError};
-
-        let schema =
-            serde_json::to_string(&call.schema).map_err(|e| PlannerError::Failed(e.to_string()))?;
-
-        let mut cmd = tokio::process::Command::new(&self.program);
-        cmd.arg("-p")
-            .arg(&call.prompt)
-            .args(["--output-format", "json"])
-            .arg("--verbose")
-            .args(["--json-schema", &schema])
-            .args(["--max-budget-usd", &call.max_budget_usd.to_string()])
-            // No plugins, hooks or MCP servers from the developer's environment.
-            .args(["--setting-sources", ""])
-            .arg("--strict-mcp-config")
-            // The supervisor decides; it never touches the repository itself.
-            .args(["--tools", ""])
-            .args(["--permission-mode", "default"])
-            .current_dir(&self.cwd)
-            .kill_on_drop(true);
-
-        if let Some(model) = &self.model {
-            cmd.args(["--model", model]);
-        }
-
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| PlannerError::Failed(e.to_string()))?;
-
-        if !output.status.success() {
-            return Err(PlannerError::Failed(
-                String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            ));
-        }
-
-        let parsed: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .map_err(|e| PlannerError::Parse(e.to_string()))?;
-
-        // `structured_output` is present only when --json-schema validated successfully. Its
-        // absence means the model never produced a conforming answer, which the caller treats as
-        // an unusable response rather than guessing at the prose.
-        let structured = parsed
-            .get("structured_output")
-            .cloned()
-            .ok_or(PlannerError::NoStructuredOutput)?;
-
-        Ok(ModelResponse {
-            structured,
-            cost_usd: parsed.get("total_cost_usd").and_then(|c| c.as_f64()),
-        })
     }
 }
 

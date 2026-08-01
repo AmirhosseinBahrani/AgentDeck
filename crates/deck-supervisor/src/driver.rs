@@ -466,6 +466,11 @@ impl<'a> Driver<'a> {
             .plan(prompt, plan_schema(), self.config.per_call_budget_usd)
             .await;
 
+        // Kept so the escalation can say what actually went wrong. A planner that could not be
+        // reached and a model that answered badly need completely different fixes, and reporting
+        // both as "failed validation" sends the operator looking in the wrong place.
+        let mut unreachable: Option<String> = None;
+
         let (plan, cost, faults, repairs) = match first {
             Ok((plan, cost)) => {
                 let faults = validate_plan(&plan, &roles, self.config.plan_limits);
@@ -489,11 +494,17 @@ impl<'a> Driver<'a> {
                                 (None, Some(total), retry_faults, 1)
                             }
                         }
-                        Err(_) => (None, cost, faults, 1),
+                        Err(e) => {
+                            unreachable = Some(e.to_string());
+                            (None, cost, faults, 1)
+                        }
                     }
                 }
             }
-            Err(_) => (None, None, Vec::new(), 0),
+            Err(e) => {
+                unreachable = Some(e.to_string());
+                (None, None, Vec::new(), 0)
+            }
         };
 
         let Some(plan) = plan else {
@@ -501,12 +512,20 @@ impl<'a> Driver<'a> {
             // Escalating is the honest outcome.
             run.state.phase = RunPhase::BlockedOnHuman;
             run.state.open_escalations += 1;
+            let mut errors: Vec<String> = faults.iter().map(|f| f.to_string()).collect();
+            let rationale = match &unreachable {
+                Some(detail) => {
+                    errors.push(detail.clone());
+                    "the planner could not be reached or gave an unusable answer; escalating"
+                }
+                None => "planning failed validation twice; escalating rather than guessing",
+            };
             run.log.record_model_decision(
                 run.state.iteration,
                 Stage::Plan,
                 "decompose_objective",
-                "planning failed validation twice; escalating rather than guessing",
-                faults.iter().map(|f| f.to_string()).collect(),
+                rationale,
+                errors,
                 repairs,
                 cost,
             );

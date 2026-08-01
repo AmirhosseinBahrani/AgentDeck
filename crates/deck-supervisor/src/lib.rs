@@ -10,6 +10,7 @@
 //! verification gate in [`contract`].
 
 pub mod autonomy;
+pub mod cli_planner;
 pub mod contract;
 pub mod decision;
 pub mod driver;

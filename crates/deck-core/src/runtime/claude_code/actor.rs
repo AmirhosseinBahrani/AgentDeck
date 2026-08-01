@@ -124,7 +124,7 @@ impl SpawnOptions {
 ///
 /// Note this must not be empty: OAuth credentials come from the OS keychain, which needs
 /// HOME, and the CLI shells out, which needs PATH.
-const ENV_ALLOWLIST: &[&str] = &[
+pub const ENV_ALLOWLIST: &[&str] = &[
     "HOME", "PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM", "TZ",
 ];
 

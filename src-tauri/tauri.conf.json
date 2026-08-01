@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "agentdeck",
+  "productName": "AgentDeck",
   "version": "0.1.0",
   "identifier": "com.amirhossein.agentdeck",
   "build": {
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "agentdeck",
-        "width": 800,
-        "height": 600
+        "title": "AgentDeck",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 600
       }
     ],
     "security": {

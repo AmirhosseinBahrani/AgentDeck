@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
+import { RuntimeGate } from "./features/setup/RuntimeGate";
 import { TeamView } from "./features/team/TeamView";
 import { TranscriptView } from "./features/sessions/TranscriptView";
 import {
@@ -21,6 +22,17 @@ import "./index.css";
  * hierarchy is established now rather than retrofitted around a chat.
  */
 export default function App() {
+  return (
+    // Everything below assumes a working `claude` CLI, so nothing below mounts until there is
+    // one — including the event pump, which would otherwise stream an empty transcript at
+    // someone whose real problem is that the CLI is not installed.
+    <RuntimeGate>
+      <Deck />
+    </RuntimeGate>
+  );
+}
+
+function Deck() {
   useEventPump();
 
   const [fixtures, setFixtures] = useState<string[]>([]);

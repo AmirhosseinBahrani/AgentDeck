@@ -43,6 +43,7 @@ pub fn run() {
             events::approve_dispatch,
             events::force_kill_agent,
             events::get_last_run,
+            events::check_runtime,
         ])
         .setup(|app| {
             background::install_tray(app.handle())?;

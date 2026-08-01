@@ -419,6 +419,17 @@ pub async fn force_kill_agent(state: State<'_, AppState>, task_id: String) -> Re
     }
 }
 
+/// Whether the `claude` CLI is installed and someone has logged into it.
+///
+/// AgentDeck has no accounts of its own, so this is not a sign-in — it is the one dependency the
+/// app cannot satisfy for the operator. Checked at startup rather than at first run, because
+/// otherwise a missing CLI surfaces as an agent that failed to spawn several minutes after they
+/// wrote an objective, and reads as a problem with the objective.
+#[tauri::command]
+pub async fn check_runtime() -> Result<deck_core::runtime::claude_code::probe::Readiness, String> {
+    Ok(deck_core::runtime::claude_code::probe::probe("claude").await)
+}
+
 /// What the last run in this project was doing.
 ///
 /// The point of persisting the graph and the decision log is that reopening the app is not a

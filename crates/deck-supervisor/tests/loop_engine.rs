@@ -171,7 +171,11 @@ fn hitting_the_iteration_cap_blocks_on_a_human_rather_than_failing() {
     };
     let outcome = sweep(&state, &g, RunLimits::default(), true);
 
-    assert_eq!(outcome.terminal, Some(RunPhase::BlockedOnHuman));
+    // Parked, not ended. A terminal phase made the loop exit, so "raise the cap and carry on"
+    // was unreachable — the run was gone before anyone read the message asking them to decide.
+    assert_eq!(outcome.terminal, None);
+    assert_eq!(outcome.phase, Some(RunPhase::BlockedOnHuman));
+    assert!(!outcome.should_iterate);
     assert!(!outcome.notes.is_empty(), "the reason should be recorded");
 }
 
@@ -186,7 +190,8 @@ fn hitting_the_cost_ceiling_stops_before_spending_more() {
     };
     let outcome = sweep(&state, &g, RunLimits::default(), true);
 
-    assert_eq!(outcome.terminal, Some(RunPhase::BlockedOnHuman));
+    assert_eq!(outcome.terminal, None, "stops spending without ending");
+    assert_eq!(outcome.phase, Some(RunPhase::BlockedOnHuman));
     assert!(!outcome.should_iterate);
     assert!(outcome.notes[0].contains("cost"));
 }
@@ -227,7 +232,11 @@ fn deadlock_stops_the_run_instead_of_spinning() {
 
     let g = graph_with(vec![s]);
     let outcome = sweep(&RunState::default(), &g, RunLimits::default(), true);
-    assert_eq!(outcome.terminal, Some(RunPhase::BlockedOnHuman));
+    // Stops iterating and asks, rather than ending: a human can abandon the failed task and let
+    // the rest of the graph proceed, which is impossible once the loop has exited.
+    assert_eq!(outcome.terminal, None);
+    assert_eq!(outcome.phase, Some(RunPhase::BlockedOnHuman));
+    assert!(!outcome.should_iterate);
 }
 
 #[test]

@@ -317,10 +317,22 @@ impl deck_supervisor::workspaces::ReportQueue for ClaimQueue {
     }
 }
 
+/// Escalation answers the operator has given, waiting for the driver to apply them.
+pub type SharedAnswers =
+    Arc<parking_lot::Mutex<Vec<(String, deck_supervisor::escalation::EscalationAnswer)>>>;
+
 /// Dispatch approvals the operator has clicked, waiting for the driver to act on them.
 pub type SharedApprovals = Arc<parking_lot::Mutex<Vec<TaskId>>>;
 
 pub struct GrantedApprovals(pub SharedApprovals);
+
+pub struct GivenAnswers(pub SharedAnswers);
+
+impl deck_supervisor::escalation::AnswerQueue for GivenAnswers {
+    fn drain(&self) -> Vec<(String, deck_supervisor::escalation::EscalationAnswer)> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
 
 impl deck_supervisor::autonomy::ApprovalQueue for GrantedApprovals {
     fn drain(&self) -> Vec<TaskId> {

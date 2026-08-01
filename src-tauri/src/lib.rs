@@ -51,6 +51,7 @@ pub fn run() {
             events::force_kill_agent,
             events::get_last_run,
             events::check_runtime,
+            events::answer_escalation,
         ])
         .setup(|app| {
             background::install_tray(app.handle())?;

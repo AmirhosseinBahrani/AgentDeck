@@ -80,6 +80,8 @@ export interface TaskSummary {
   blocked_reason: string | null;
   /** Assigned and ready, but held because this mode requires a human to start it. */
   awaiting_approval: boolean;
+  /** The agent's session, so its transcript is reachable from the task. */
+  session_id: string | null;
 }
 
 export interface DecisionSummary {
@@ -102,6 +104,7 @@ export interface RunSnapshot {
   autonomy: Autonomy;
   /** Whether the branches have been merged and tested together. */
   integrated: boolean;
+  escalations: Escalation[];
   tasks: TaskSummary[];
   decisions: DecisionSummary[];
 }
@@ -140,4 +143,31 @@ export interface AuthInfo {
   /** On subscription billing this, not a dollar budget, is what limits concurrent agents. */
   subscription: string | null;
   organization: string | null;
+}
+
+/** A typed answer. Never free text — the model must not be able to widen its own permissions. */
+export type EscalationAnswer =
+  | { action: "retry_planning" }
+  | { action: "retry_task"; task_id: string }
+  | { action: "abandon_task"; task_id: string }
+  | { action: "reintegrate" }
+  | { action: "cancel_run" };
+
+export interface EscalationOption {
+  label: string;
+  /** What choosing it does, in the operator's terms. */
+  consequence: string;
+  answer: EscalationAnswer;
+  destructive: boolean;
+}
+
+/** Something the run needs a person to decide before it can continue. */
+export interface Escalation {
+  id: string;
+  kind: string;
+  task_id: string | null;
+  question: string;
+  detail: string;
+  options: EscalationOption[];
+  opened_at_iteration: number;
 }

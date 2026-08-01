@@ -59,6 +59,10 @@ pub struct AppState {
     pub pending_claims: crate::supervision::SharedClaims,
     /// Dispatch approvals the operator has granted but the driver has not yet acted on.
     pub pending_approvals: crate::supervision::SharedApprovals,
+    /// Escalation answers waiting for the driver. Queued rather than applied on arrival for the
+    /// same reason reports are: a click lands whenever it lands, and mutating the graph
+    /// mid-iteration would change it underneath a stage already reading it.
+    pub pending_answers: crate::supervision::SharedAnswers,
     /// Identifies this launch, so agents recorded by a previous one can be told apart from
     /// agents belonging to a second instance running right now.
     pub boot: BootId,
@@ -156,6 +160,7 @@ impl AppState {
             run_snapshot: Arc::new(Mutex::new(None)),
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_approvals: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,
             identity,
             startup_recovery,

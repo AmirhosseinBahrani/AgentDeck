@@ -161,6 +161,9 @@ impl Trigger {
 /// Outcome of the pure sweep. Never calls a model, never mutates anything.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SweepOutcome {
+    /// A phase the sweep wants set without ending the run. Distinct from `terminal`, which
+    /// stops the loop for good.
+    pub phase: Option<RunPhase>,
     pub should_iterate: bool,
     pub terminal: Option<RunPhase>,
     pub notes: Vec<String>,
@@ -175,6 +178,7 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
 
     if state.phase.is_terminal() {
         return SweepOutcome {
+            phase: None,
             should_iterate: false,
             terminal: Some(state.phase),
             notes,
@@ -190,7 +194,8 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
             should_iterate: false,
             // Blocked rather than failed: a human can raise the cap, and failing autonomously
             // would discard everything the run has produced.
-            terminal: Some(RunPhase::BlockedOnHuman),
+            terminal: None,
+            phase: Some(RunPhase::BlockedOnHuman),
             notes,
         };
     }
@@ -202,7 +207,11 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
         ));
         return SweepOutcome {
             should_iterate: false,
-            terminal: Some(RunPhase::BlockedOnHuman),
+            // Parked, not finished. Returning this as terminal made the loop exit, so the
+            // dashboard's promise that the run would "resume once you answer" was false —
+            // there was nothing left running to resume. It now idles until an answer arrives.
+            terminal: None,
+            phase: Some(RunPhase::BlockedOnHuman),
             notes,
         };
     }
@@ -214,6 +223,7 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
         if state.integrated {
             notes.push("every objective-gating task is complete and the branches integrate".into());
             return SweepOutcome {
+                phase: None,
                 should_iterate: false,
                 terminal: Some(RunPhase::Completed),
                 notes,
@@ -221,6 +231,7 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
         }
         notes.push("every objective-gating task is complete; integrating the branches".into());
         return SweepOutcome {
+            phase: None,
             should_iterate: true,
             terminal: None,
             notes,
@@ -236,7 +247,11 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
         );
         return SweepOutcome {
             should_iterate: false,
-            terminal: Some(RunPhase::BlockedOnHuman),
+            // Parked, not finished. Returning this as terminal made the loop exit, so the
+            // dashboard's promise that the run would "resume once you answer" was false —
+            // there was nothing left running to resume. It now idles until an answer arrives.
+            terminal: None,
+            phase: Some(RunPhase::BlockedOnHuman),
             notes,
         };
     }
@@ -249,6 +264,7 @@ pub fn sweep(state: &RunState, graph: &TaskGraph, limits: RunLimits, dirty: bool
             .any(|t| matches!(t.status, TaskStatus::Review | TaskStatus::Running));
 
     SweepOutcome {
+        phase: None,
         should_iterate: dirty || needs_plan || has_work,
         terminal: None,
         notes,
@@ -340,6 +356,31 @@ impl IterationLog {
             repair_count,
             rationale: rationale.to_string(),
             cost_usd,
+        });
+    }
+
+    /// A decision a person made. Kept distinct from the other two because the decision log's
+    /// most useful column is who was actually driving, and an operator override recorded as
+    /// "code" would hide exactly the moment the run stopped being autonomous.
+    pub fn record_human_decision(
+        &mut self,
+        iteration: u32,
+        stage: Stage,
+        kind: &str,
+        rationale: &str,
+    ) {
+        self.decisions.push(DecisionRecord {
+            iteration,
+            stage: format!("{stage:?}"),
+            kind: kind.to_string(),
+            decided_by: DecidedBy::Human,
+            rule_id: None,
+            task_id: None,
+            inputs_digest: None,
+            validation_errors: Vec::new(),
+            repair_count: 0,
+            rationale: rationale.to_string(),
+            cost_usd: None,
         });
     }
 

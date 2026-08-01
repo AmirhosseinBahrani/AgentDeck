@@ -383,10 +383,19 @@ async fn cost_accumulates_across_calls_and_stops_the_run_at_the_ceiling() {
 
     assert!(run.state.spent_usd >= 0.10);
     let outcome = driver.step(&mut run, true).await;
+
+    // Stops spending, but stays alive to be answered. Returning this as terminal used to make
+    // the loop exit, so "raise the cap and carry on" was not actually reachable — the run was
+    // already gone by the time anyone read the message asking them to decide.
     assert_eq!(
         outcome,
-        IterationOutcome::Terminal(RunPhase::BlockedOnHuman),
-        "an over-budget run must stop and ask, not fail silently or keep spending"
+        IterationOutcome::Idle,
+        "an over-budget run must stop spending without ending"
+    );
+    assert_eq!(
+        run.state.phase,
+        RunPhase::BlockedOnHuman,
+        "and it must say that it is waiting on a person"
     );
 }
 

@@ -15,9 +15,10 @@ import { Input } from "../../components/ui/input";
 import { Empty, Panel } from "../../components/ui/panel";
 import { StatusDot } from "../../components/ui/status-dot";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
-import type { Autonomy, RunSnapshot, TaskSummary } from "../../lib/types";
+import type { Autonomy, EscalationAnswer, RunSnapshot, TaskSummary } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { AutonomyPicker, AutonomyStripe } from "./AutonomyPicker";
+import { EscalationInbox } from "./EscalationInbox";
 
 /**
  * The dashboard the product is built around.
@@ -29,7 +30,12 @@ import { AutonomyPicker, AutonomyStripe } from "./AutonomyPicker";
  * Three columns because they answer three different questions, in the order an operator asks
  * them: what is happening, what needs me, and why did it decide that.
  */
-export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
+export function TeamView({
+  onOpenSession,
+}: {
+  /** Opens a session transcript. Given the id so a task can route straight to its own agent. */
+  onOpenSession: (sessionId?: string) => void;
+}) {
   const [objective, setObjective] = useState("");
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,6 +44,7 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
   // is authoritative — the picker reflects the run rather than a local preference that no longer
   // matches what the supervisor is actually enforcing.
   const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
+  const [answering, setAnswering] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -91,6 +98,19 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
     }
   }
 
+  async function answer(escalationId: string, choice: EscalationAnswer) {
+    setAnswering(escalationId);
+    setError(null);
+    try {
+      await invoke("answer_escalation", { escalationId, answer: choice });
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setAnswering(null);
+    }
+  }
+
   async function approve(taskId: string) {
     try {
       await invoke("approve_dispatch", { taskId });
@@ -104,6 +124,10 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
   const effectiveMode = running ? (snapshot?.autonomy ?? autonomy) : autonomy;
   const tasks = snapshot?.tasks ?? [];
   const held = tasks.filter((t) => t.awaiting_approval);
+  const escalations = snapshot?.escalations ?? [];
+  // Questions come first: everything else in this column is information, and this is the only
+  // thing that is actually blocking the run.
+  const needsYou = escalations.length + held.length;
   const live = tasks.filter((t) => t.status === "running").length;
 
   return (
@@ -142,22 +166,30 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
             </Empty>
           ) : (
             tasks.map((task, i) => (
-              <TaskRow key={task.id} task={task} index={i} onForceKill={forceKill} />
+              <TaskRow
+                key={task.id}
+                task={task}
+                index={i}
+                onForceKill={forceKill}
+                onOpenSession={onOpenSession}
+              />
             ))
           )}
         </Panel>
 
         <Panel
-          title={held.length > 0 ? "Waiting for you" : "Blockers"}
-          count={held.length}
-          accent={held.length > 0 ? "attention" : undefined}
+          title={needsYou > 0 ? "Waiting for you" : "Blockers"}
+          count={needsYou}
+          accent={needsYou > 0 ? "attention" : undefined}
           className="animate-rise [animation-delay:60ms]"
         >
-          {held.length > 0 ? (
-            held.map((task) => <ApprovalRow key={task.id} task={task} onApprove={approve} />)
-          ) : (
-            <Blockers snapshot={snapshot} />
+          {escalations.length > 0 && (
+            <EscalationInbox escalations={escalations} onAnswer={answer} busy={answering} />
           )}
+          {held.map((task) => (
+            <ApprovalRow key={task.id} task={task} onApprove={approve} />
+          ))}
+          {needsYou === 0 && <Blockers snapshot={snapshot} />}
         </Panel>
 
         <Panel
@@ -221,7 +253,12 @@ export function TeamView({ onOpenSession }: { onOpenSession: () => void }) {
             tone="attention"
           />
         )}
-        <Button variant="ghost" size="sm" className="ml-auto font-mono" onClick={onOpenSession}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto font-mono"
+          onClick={() => onOpenSession()}
+        >
           <Terminal /> transcripts
         </Button>
       </footer>
@@ -363,10 +400,12 @@ function TaskRow({
   task,
   index,
   onForceKill,
+  onOpenSession,
 }: {
   task: TaskSummary;
   index: number;
   onForceKill: (taskId: string) => void;
+  onOpenSession: (sessionId?: string) => void;
 }) {
   const [confirming, setConfirming] = useState(false);
 
@@ -411,6 +450,23 @@ function TaskRow({
               </TooltipContent>
             </Tooltip>
           ))}
+
+        {/* The route to the agent's transcript. Previously there was none: real sessions never
+            appeared anywhere, so a task that looked stuck could not be inspected at all. */}
+        {task.session_id && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenSession(task.session_id ?? undefined)}
+              >
+                <Terminal />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Read what this agent is doing.</TooltipContent>
+          </Tooltip>
+        )}
 
         {task.objective_gate && (
           <Tooltip>
@@ -474,7 +530,8 @@ function Blockers({ snapshot }: { snapshot: RunSnapshot | null }) {
   if (snapshot?.phase === "blockedonhuman") {
     return (
       <div className="rounded-[7px] border border-deck-attention/30 bg-deck-attention/8 px-2.5 py-2 text-[12px] leading-relaxed text-deck-attention">
-        The run is waiting for a decision from you. It will resume once you answer.
+        The run is parked. It is not waiting on a specific question, so it most likely hit a
+        limit — check the decision log below for the last thing it recorded.
       </div>
     );
   }

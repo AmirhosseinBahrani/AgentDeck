@@ -309,6 +309,9 @@ pub async fn start_supervisor_run(
     let approvals = state.pending_approvals.clone();
     approvals.lock().clear();
     let approval_queue = crate::supervision::GrantedApprovals(approvals);
+    let answers = state.pending_answers.clone();
+    answers.lock().clear();
+    let answer_queue = crate::supervision::GivenAnswers(answers);
     let app_handle = app.clone();
 
     // The supervisor has no long-lived model session on purpose: its memory is meant to *be* the
@@ -327,7 +330,8 @@ pub async fn start_supervisor_run(
     tauri::async_runtime::spawn(async move {
         let driver = Driver::new(&config, &planner, workspaces.as_ref())
             .with_reports(&report_queue)
-            .with_approvals(&approval_queue);
+            .with_approvals(&approval_queue)
+            .with_answers(&answer_queue);
         let mut run = Run::new();
 
         // Published after each iteration rather than polled from the run: polling would let the
@@ -459,6 +463,27 @@ pub async fn get_last_run(state: State<'_, AppState>) -> Result<Option<PastRunSu
         task_count: run.task_count,
         decision_count: run.decision_count,
     }))
+}
+
+/// Applies a typed answer to an open escalation.
+///
+/// The answer is an enum rather than free text on purpose. The whole design rests on the model
+/// never widening its own permissions, and a prose channel into the supervisor would be exactly
+/// that hole — "just skip the tests" has to be unrepresentable, not merely discouraged.
+#[tauri::command]
+pub async fn answer_escalation(
+    state: State<'_, AppState>,
+    escalation_id: String,
+    answer: deck_supervisor::escalation::EscalationAnswer,
+) -> Result<(), String> {
+    state.pending_answers.lock().push((escalation_id, answer));
+
+    // Wake the loop so the run resumes now. It is parked rather than finished, and without this
+    // it would sit until the next tick wondering why nothing had changed.
+    if let Some(triggers) = state.run_triggers.lock().await.as_ref() {
+        let _ = triggers.try_send(deck_supervisor::loop_engine::Trigger::HumanAnswered);
+    }
+    Ok(())
 }
 
 /// Lets a task start.
@@ -613,6 +638,8 @@ pub struct RunSnapshot {
     /// Whether the branches have been merged and tested together. A run is not finished without
     /// it, so the dashboard says so rather than showing all-green tasks and nothing else.
     pub integrated: bool,
+    /// The questions the run needs answered, with the answers it will accept.
+    pub escalations: Vec<deck_supervisor::escalation::Escalation>,
     pub tasks: Vec<TaskSummary>,
     pub decisions: Vec<DecisionSummary>,
 }
@@ -629,6 +656,12 @@ pub struct TaskSummary {
     pub blocked_reason: Option<String>,
     /// Assigned and ready, but held because this mode requires a human to start it.
     pub awaiting_approval: bool,
+    /// The agent's session, so its transcript is reachable from the task.
+    ///
+    /// Without this a real agent was unfindable: the sessions list was only ever populated by
+    /// fixture replay, so the one thing an operator wants when a task looks stuck — to read what
+    /// the agent is actually doing — had no route to it.
+    pub session_id: Option<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -672,6 +705,7 @@ fn snapshot_of(
             objective_gate: task.objective_gate,
             blocked_reason: task.failure_reason.clone(),
             awaiting_approval: run.awaiting_approval.contains(&task.id),
+            session_id: run.sessions.get(&task.id).map(|s| s.to_string()),
         })
         .collect();
 
@@ -703,6 +737,7 @@ fn snapshot_of(
         objective: objective.to_string(),
         autonomy: autonomy.as_str().to_string(),
         integrated: run.state.integrated,
+        escalations: run.escalations.clone(),
         phase: format!("{:?}", run.state.phase).to_lowercase(),
         iteration: run.state.iteration,
         spent_usd: run.state.spent_usd,

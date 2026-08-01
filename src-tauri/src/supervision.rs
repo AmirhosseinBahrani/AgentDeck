@@ -412,6 +412,17 @@ pub type SharedApprovals = Arc<parking_lot::Mutex<Vec<TaskId>>>;
 
 pub struct GrantedApprovals(pub SharedApprovals);
 
+/// Tasks the operator has added mid-run, waiting for the driver.
+pub type SharedAddedTasks = Arc<parking_lot::Mutex<Vec<deck_supervisor::guidance::RequestedTask>>>;
+
+pub struct AddedTasks(pub SharedAddedTasks);
+
+impl deck_supervisor::guidance::TaskQueue for AddedTasks {
+    fn drain(&self) -> Vec<deck_supervisor::guidance::RequestedTask> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
 /// Standing instructions the operator has sent, waiting for the driver.
 pub type SharedGuidance = Arc<parking_lot::Mutex<Vec<deck_supervisor::guidance::Guidance>>>;
 

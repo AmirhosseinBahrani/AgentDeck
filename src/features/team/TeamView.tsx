@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { History, Loader2, Play, RotateCcw, Square, UserPlus } from "lucide-react";
+import { History, Loader2, Play, Plus, RotateCcw, Square, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -44,6 +44,7 @@ export function TeamView({
   const [answering, setAnswering] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<Set<string>>(() => new Set());
+  const [addingTask, setAddingTask] = useState(false);
   const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
   const [now, setNow] = useState(Date.now());
   const [hiring, setHiring] = useState(false);
@@ -153,6 +154,124 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
   );
 }
 
+/**
+ * Asks for one more piece of work on a run that is already going.
+ *
+ * The reviewer that finds a defect it is not allowed to fix has nowhere to send it: the task that
+ * owns the fix is already complete, and retry, abandon and end-the-run are all the wrong answer.
+ * This is the missing one. What is added is treated like any planned task — same contract repair,
+ * same graph validation, same verification gate.
+ */
+function AddTask({
+  open,
+  roles,
+  onClose,
+  onAdded,
+}: {
+  open: boolean;
+  roles: string[];
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [role, setRole] = useState("");
+  const [description, setDescription] = useState("");
+  const [command, setCommand] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!open) return null;
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("add_task", {
+        title,
+        role: role || roles[0] || "developer",
+        description,
+        verifyCommand: command || null,
+      });
+      setTitle("");
+      setDescription("");
+      setCommand("");
+      onAdded();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+      <div className="glass animate-rise flex w-[560px] flex-col gap-4 rounded-[14px] p-6">
+        <div>
+          <h2 className="text-[19px] font-semibold tracking-tight text-deck-text">Add a task</h2>
+          <p className="mt-1.5 text-[12.5px] leading-relaxed text-deck-dim">
+            Joins the current run at the next iteration. It is verified like any other task, and
+            it will not gate completion.
+          </p>
+        </div>
+
+        <Input
+          autoFocus
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Correct the README command"
+        />
+
+        <div className="flex flex-wrap gap-1.5">
+          {roles.map((r) => (
+            <button
+              key={r}
+              onClick={() => setRole(r)}
+              className={cn(
+                "rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors",
+                (role || roles[0]) === r
+                  ? "border-deck-live/40 bg-deck-live/[0.1] text-deck-live"
+                  : "border-white/[0.08] text-deck-faint hover:bg-white/[0.05]",
+              )}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={4}
+          placeholder="What needs doing, and how you will know it worked."
+          className="resize-none rounded-md border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[12.5px] leading-[19px] text-deck-text placeholder:text-deck-faint focus:border-white/[0.16] focus:outline-none"
+        />
+
+        <Input
+          value={command}
+          onChange={(e) => setCommand(e.target.value)}
+          placeholder="Command that proves it worked (optional)"
+        />
+
+        {error && <p className="text-[11.5px] text-deck-danger">{error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="md" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            disabled={busy || !title.trim()}
+            onClick={() => void submit()}
+          >
+            Add to run
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Returns to the start screen, which is also where earlier runs are listed. */
   async function newRun() {
     try {
@@ -230,6 +349,15 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <HireAgent open={hiring} onClose={() => setHiring(false)} onHired={() => void refresh()} />
+      <AddTask
+        open={addingTask}
+        roles={[...new Set((snapshot?.agents ?? []).map((a) => a.role))]}
+        onClose={() => setAddingTask(false)}
+        onAdded={() => {
+          setAddingTask(false);
+          void refresh();
+        }}
+      />
       <RevokeAgent
         agent={snapshot?.agents.find((a) => a.id === revoking) ?? null}
         onClose={() => setRevoking(null)}
@@ -350,10 +478,18 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
           </section>
 
           <section className="flex min-h-[180px] shrink-0 flex-col gap-3">
-            <SectionRule
-              label="Task graph"
-              trailing={`${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
-            />
+            <div className="flex items-center justify-between gap-3">
+              <SectionRule
+                label="Task graph"
+                trailing={`${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
+                className="grow"
+              />
+              {running && (
+                <Button variant="ghost" size="sm" onClick={() => setAddingTask(true)}>
+                  <Plus /> Add task
+                </Button>
+              )}
+            </div>
             {running && tasks.length === 0 ? (
               <PlanningNotice startedAt={snapshot?.started_at_ms ?? 0} />
             ) : (

@@ -66,6 +66,8 @@ pub struct AppState {
     /// Worker reports awaiting the driver's IngestReports stage.
     pub pending_claims: crate::supervision::SharedClaims,
     /// Dispatch approvals the operator has granted but the driver has not yet acted on.
+    /// Tasks the operator added while a run is going.
+    pub pending_tasks: crate::supervision::SharedAddedTasks,
     pub pending_approvals: crate::supervision::SharedApprovals,
     /// Escalation answers waiting for the driver. Queued rather than applied on arrival for the
     /// same reason reports are: a click lands whenever it lands, and mutating the graph
@@ -204,6 +206,7 @@ impl AppState {
             run_snapshot: Arc::new(parking_lot::Mutex::new(None)),
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_approvals: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            pending_tasks: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_guidance: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,

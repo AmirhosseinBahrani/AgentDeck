@@ -353,8 +353,6 @@ pub async fn start_supervisor_run(
         .with_policy(permissions.level, &permissions.extra_bash)
         .with_model(models.worker.clone()),
     );
-    // Before any agent starts, so landing can tell whether the branch moved during the run.
-    workspaces.record_base_sha().await;
     let planner = crate::supervision::CliPlanner::new(repo).with_model(models.supervisor.clone());
 
     // Agent activity wakes the loop. Without this the run would only advance on the tick, which
@@ -1944,6 +1942,50 @@ mod tests {
         assert_eq!(slug_for_directory("!!!"), "");
         assert_eq!(slug_for_directory(""), "");
     }
+}
+
+/// Puts the current integration onto the project's branch, on the operator's say-so.
+///
+/// The automatic land happens when a run completes. A run that blocks — on a review that could
+/// not reach a verdict, on a conflict, on a question nobody answered — leaves a perfectly good
+/// integration sitting in a scratch worktree with no way to reach it, and the project folder
+/// looking as though nothing was ever built. This is that way.
+///
+/// Same refusals as the automatic path: it will not overwrite uncommitted work and will not
+/// discard commits the integration does not contain.
+#[tauri::command]
+pub async fn land_integration(state: State<'_, AppState>) -> Result<String, String> {
+    let Some(repo) = state.project.read().clone() else {
+        return Err("No project is open.".into());
+    };
+
+    match deck_core::git::WorktreeManager::new()
+        .land(&repo, "main")
+        .await
+    {
+        Ok(deck_core::git::LandOutcome::Landed { branch, commit }) => Ok(format!(
+            "Landed on {branch} at {}",
+            &commit[..commit.len().min(8)]
+        )),
+        Ok(deck_core::git::LandOutcome::Refused { reason }) => Err(reason),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Whether there is integrated work not yet on the project's branch.
+#[tauri::command]
+pub async fn pending_integration(state: State<'_, AppState>) -> Result<bool, String> {
+    let Some(repo) = state.project.read().clone() else {
+        return Ok(false);
+    };
+    let path = deck_core::git::integration::integration_path(&repo);
+    if !path.is_dir() {
+        return Ok(false);
+    }
+
+    let integrated = deck_core::git::head_sha(&path, "HEAD").await.ok();
+    let current = deck_core::git::head_sha(&repo, "main").await.ok();
+    Ok(integrated.is_some() && integrated != current)
 }
 
 // --- project file browser ----------------------------------------------------------------------

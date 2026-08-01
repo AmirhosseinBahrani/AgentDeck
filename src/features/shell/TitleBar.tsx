@@ -80,10 +80,14 @@ export function TitleBar({
 }
 
 function AutonomyPill({ mode, running }: { mode: Autonomy; running: boolean }) {
-  const attention = mode === "autonomous";
+  // Guarded rather than trusted. The label is the whole point of the pill, and a value that
+  // arrives empty renders a coloured chip that says nothing — which is worse than wrong,
+  // because a chip with no word still looks like a deliberate state.
+  const label = mode?.trim() ? mode : "assisted";
+  const attention = label === "autonomous";
   return (
     <span
-      title={`${mode} mode`}
+      title={`${label} mode — how much the team may do without asking you`}
       className={cn(
         "flex h-[26px] items-center gap-[7px] rounded-full border px-[11px]",
         attention
@@ -104,7 +108,7 @@ function AutonomyPill({ mode, running }: { mode: Autonomy; running: boolean }) {
           attention ? "text-deck-attention" : "text-deck-live",
         )}
       >
-        {mode}
+        {label}
       </span>
     </span>
   );

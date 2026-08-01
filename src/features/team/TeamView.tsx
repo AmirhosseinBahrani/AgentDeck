@@ -106,6 +106,18 @@ export function TeamView({
     }
   }
 
+  /** Returns to the start screen, which is also where earlier runs are listed. */
+  async function newRun() {
+    try {
+      await invoke("clear_run");
+      setObjective("");
+      setSnapshot(null);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function approve(taskId: string) {
     try {
       await invoke("approve_dispatch", { taskId });
@@ -201,15 +213,17 @@ export function TeamView({
           <Counter value={counts.running} label="running" tone="live" />
           <Counter value={counts.blocked} label="blocked" tone="attention" />
           <Counter value={counts.queued} label="queued" />
-          <Button
-            variant={running ? "danger" : "primary"}
-            size="lg"
-            onClick={running ? cancel : start}
-            disabled={busy}
-          >
-            {running ? <Square /> : <Play />}
-            {running ? "Stop run" : "Start"}
-          </Button>
+          {running ? (
+            <Button variant="danger" size="lg" onClick={cancel} disabled={busy}>
+              <Square /> Stop run
+            </Button>
+          ) : (
+            // The run is over. The useful action is starting another, not restarting this one —
+            // and this is the only route back to the start screen, where earlier runs are listed.
+            <Button variant="primary" size="lg" onClick={newRun} disabled={busy}>
+              <RotateCcw /> New run
+            </Button>
+          )}
         </div>
       </header>
 

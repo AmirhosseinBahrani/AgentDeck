@@ -52,6 +52,7 @@ pub fn run() {
             events::force_kill_agent,
             events::get_last_run,
             events::list_runs,
+            events::clear_run,
             events::check_runtime,
             events::answer_escalation,
             events::send_guidance,

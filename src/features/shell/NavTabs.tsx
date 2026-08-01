@@ -8,23 +8,17 @@ import { cn } from "../../lib/utils";
  * A view you can enter and not leave is a trap, and navigation belongs above the views rather
  * than inside one of them.
  *
- * Tabs with nothing behind them yet are shown disabled rather than hidden. The design has five;
- * hiding the unbuilt ones would misrepresent the product, and silently doing nothing on click
- * would read as a bug.
+ * `ready` stays in the shape even with every tab built: a tab that is present but does nothing
+ * reads as a bug, so anything added ahead of its backend says so rather than pretending.
  */
 export type NavTab = "team" | "workspace" | "graph" | "diffs" | "decisions";
 
 const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
   { id: "team", label: "Team", ready: true },
   { id: "workspace", label: "Sessions", ready: true },
-  { id: "graph", label: "Task graph", ready: false, why: "Shown on the Team view for now" },
-  { id: "diffs", label: "Diffs", ready: false, why: "Nothing computes per-task diffs yet" },
-  {
-    id: "decisions",
-    label: "Decisions",
-    ready: false,
-    why: "Shown beside each view for now",
-  },
+  { id: "graph", label: "Task graph", ready: true },
+  { id: "diffs", label: "Diffs", ready: true },
+  { id: "decisions", label: "Decisions", ready: true },
 ];
 
 export function NavTabs({

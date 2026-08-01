@@ -52,6 +52,7 @@ pub fn run() {
             events::get_last_run,
             events::check_runtime,
             events::answer_escalation,
+            events::get_task_diffs,
         ])
         .setup(|app| {
             background::install_tray(app.handle())?;

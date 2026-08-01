@@ -29,6 +29,16 @@ pub struct WorktreeInfo {
     pub base_sha: String,
 }
 
+/// What changed in one file, as the diff view shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileDiff {
+    pub path: String,
+    pub added: u32,
+    pub removed: u32,
+    /// False while the change is still only in the working tree.
+    pub committed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorktreeStatus {
     pub path: PathBuf,
@@ -155,6 +165,55 @@ impl WorktreeManager {
 
         // Three-dot: what the agent added, excluding anything that landed on the base since.
         git(&info.path, &["diff", &format!("{}...HEAD", info.base_sha)]).await
+    }
+
+    /// Per-file added/removed line counts for what an agent has produced.
+    ///
+    /// Three-dot against the pinned base for the same reason `diff` uses it: anything that
+    /// landed on the base branch since the worktree was created is not this agent's work, and
+    /// counting it would credit them with changes they never made.
+    ///
+    /// Includes uncommitted work. An agent mid-task has usually not committed, and a diff view
+    /// that showed nothing until it did would be blank exactly when someone is checking on it.
+    pub async fn numstat(&self, repo: &Path, info: &WorktreeInfo) -> Result<Vec<FileDiff>> {
+        let root = repo_root(repo).await?;
+        let lock = self.locks.for_repo(&root);
+        let _guard = lock.lock().await;
+
+        let committed = git(
+            &info.path,
+            &["diff", "--numstat", &format!("{}...HEAD", info.base_sha)],
+        )
+        .await
+        .unwrap_or_default();
+
+        // Working tree against HEAD, which is where in-progress edits live.
+        let uncommitted = git(&info.path, &["diff", "--numstat", "HEAD"])
+            .await
+            .unwrap_or_default();
+
+        let mut files: std::collections::BTreeMap<String, FileDiff> = Default::default();
+        for (text, staged) in [(committed, true), (uncommitted, false)] {
+            for line in text.lines() {
+                let mut parts = line.split('\t');
+                let (Some(added), Some(removed), Some(path)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                let entry = files.entry(path.to_string()).or_insert_with(|| FileDiff {
+                    path: path.to_string(),
+                    added: 0,
+                    removed: 0,
+                    committed: staged,
+                });
+                // "-" is git's marker for a binary file; it has no line counts to report.
+                entry.added += added.parse::<u32>().unwrap_or(0);
+                entry.removed += removed.parse::<u32>().unwrap_or(0);
+                entry.committed &= staged;
+            }
+        }
+        Ok(files.into_values().collect())
     }
 
     /// Removes a worktree.

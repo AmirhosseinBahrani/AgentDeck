@@ -531,6 +531,65 @@ pub async fn answer_escalation(
     Ok(())
 }
 
+/// What each agent has actually changed.
+///
+/// Read from the worktrees on demand rather than carried in the snapshot: it costs a `git diff`
+/// per active worktree, and the dashboard polls every second. Nobody needs line counts at that
+/// rate, and paying for them continuously to render a tab that is usually closed would slow the
+/// whole app down.
+#[derive(serde::Serialize)]
+pub struct TaskDiff {
+    pub task_id: String,
+    pub title: String,
+    pub role: String,
+    pub branch: Option<String>,
+    pub files: Vec<deck_core::git::worktree::FileDiff>,
+    pub added: u32,
+    pub removed: u32,
+}
+
+#[tauri::command]
+pub async fn get_task_diffs(state: State<'_, AppState>) -> Result<Vec<TaskDiff>, String> {
+    let Some(repo) = state.project.clone() else {
+        return Ok(Vec::new());
+    };
+    let snapshot = state.run_snapshot.lock().clone().unwrap_or_default();
+    let registry = state.workspaces.clone();
+
+    let mut out = Vec::new();
+    for task in &snapshot.tasks {
+        let Ok(id) = task
+            .id
+            .parse::<uuid::Uuid>()
+            .map(deck_core::domain::ids::TaskId::from)
+        else {
+            continue;
+        };
+        let Some(workspace) = registry.get(id) else {
+            continue;
+        };
+
+        // A worktree that cannot be read yields no files rather than failing the whole view:
+        // one removed directory should not blank out every other agent's work.
+        let files = registry
+            .worktrees()
+            .numstat(&repo, &workspace.worktree)
+            .await
+            .unwrap_or_default();
+
+        out.push(TaskDiff {
+            task_id: task.id.clone(),
+            title: task.title.clone(),
+            role: task.role.clone(),
+            branch: Some(workspace.worktree.branch.clone()),
+            added: files.iter().map(|f| f.added).sum(),
+            removed: files.iter().map(|f| f.removed).sum(),
+            files,
+        });
+    }
+    Ok(out)
+}
+
 /// Lets a task start.
 ///
 /// One approval starts one agent. Deliberately not a standing grant for the task: a retry after

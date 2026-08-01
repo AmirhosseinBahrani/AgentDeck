@@ -45,7 +45,7 @@ export function TranscriptView({ sessionId }: { sessionId: string | null }) {
 
   if (!sessionId) {
     return (
-      <div className="flex h-full items-center justify-center text-neutral-500">
+      <div className="flex h-full items-center justify-center text-deck-faint">
         Select or start a session
       </div>
     );
@@ -78,7 +78,7 @@ export function TranscriptView({ sessionId }: { sessionId: string | null }) {
       {!pinned && (
         <button
           onClick={() => setPinned(true)}
-          className="absolute right-4 bottom-4 rounded bg-neutral-800 px-3 py-1.5 text-xs text-neutral-200 shadow hover:bg-neutral-700"
+          className="absolute right-4 bottom-4 rounded bg-white/8 px-3 py-1.5 text-xs text-deck-text shadow hover:bg-white/14"
         >
           Jump to latest
         </button>
@@ -92,9 +92,9 @@ function StreamingTail({ sessionId }: { sessionId: string }) {
   const partial = usePartial(sessionId);
   if (!partial) return null;
   return (
-    <div className="py-1.5 font-mono text-[12px] whitespace-pre-wrap text-neutral-200">
+    <div className="py-1.5 font-mono text-[12px] whitespace-pre-wrap text-deck-text">
       {partial}
-      <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-neutral-400 align-middle" />
+      <span className="animate-live ml-0.5 inline-block h-3.5 w-1.5 bg-deck-live align-middle" />
     </div>
   );
 }
@@ -103,16 +103,16 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
   switch (row.type) {
     case "text":
       return (
-        <div className="py-1.5 text-[13px] leading-relaxed whitespace-pre-wrap text-neutral-200">
+        <div className="py-1.5 text-[13px] leading-relaxed whitespace-pre-wrap text-deck-text">
           {row.text}
         </div>
       );
 
     case "tool_call":
       return (
-        <div className="my-1 rounded border border-neutral-800 bg-neutral-900/60 px-2.5 py-1.5">
-          <div className="mb-0.5 font-mono text-[11px] tracking-wide text-sky-400">{row.tool}</div>
-          <pre className="overflow-x-auto font-mono text-[11px] text-neutral-400">
+        <div className="my-1 rounded border border-white/8 bg-white/4/60 px-2.5 py-1.5">
+          <div className="mb-0.5 font-mono text-[11px] tracking-wide text-deck-live">{row.tool}</div>
+          <pre className="overflow-x-auto font-mono text-[11px] text-deck-dim">
             {truncate(JSON.stringify(row.input, null, 2), 600)}
           </pre>
         </div>
@@ -123,13 +123,13 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
         <div
           className={`my-1 rounded border px-2.5 py-1.5 ${
             row.isError
-              ? "border-red-900/60 bg-red-950/30"
-              : "border-neutral-800 bg-neutral-900/30"
+              ? "border-deck-danger/35 bg-deck-danger/10"
+              : "border-white/8 bg-white/4/30"
           }`}
         >
           <pre
             className={`overflow-x-auto font-mono text-[11px] whitespace-pre-wrap ${
-              row.isError ? "text-red-300" : "text-neutral-400"
+              row.isError ? "text-deck-danger" : "text-deck-dim"
             }`}
           >
             {truncate(row.output, 1200)}
@@ -139,26 +139,26 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
 
     case "permission":
       return (
-        <div className="my-1 rounded border border-amber-800/70 bg-amber-950/30 px-2.5 py-2">
-          <div className="text-[12px] font-medium text-amber-300">
+        <div className="my-1 rounded border border-deck-attention/30 bg-deck-attention/8 px-2.5 py-2">
+          <div className="text-[12px] font-medium text-deck-attention">
             Permission required: {row.tool}
           </div>
           {row.reason && (
-            <div className="mt-0.5 text-[11px] text-amber-200/70">Reason: {row.reason}</div>
+            <div className="mt-0.5 text-[11px] text-deck-attention/70">Reason: {row.reason}</div>
           )}
         </div>
       );
 
     case "turn":
       return (
-        <div className="flex items-center gap-2 py-1 text-[11px] text-neutral-500">
-          <div className="h-px flex-1 bg-neutral-800" />
+        <div className="flex items-center gap-2 py-1 text-[11px] text-deck-faint">
+          <div className="h-px flex-1 bg-white/8" />
           <span>
             turn complete
             {row.costUsd !== null && ` · $${row.costUsd.toFixed(4)}`}
             {row.isError && " · error"}
           </span>
-          <div className="h-px flex-1 bg-neutral-800" />
+          <div className="h-px flex-1 bg-white/8" />
         </div>
       );
 
@@ -167,10 +167,10 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
         <div
           className={`py-1 text-[11px] ${
             row.severity === "error"
-              ? "text-red-400"
+              ? "text-deck-danger"
               : row.severity === "warn"
-                ? "text-amber-400"
-                : "text-neutral-500"
+                ? "text-deck-attention"
+                : "text-deck-faint"
           }`}
         >
           {row.text}

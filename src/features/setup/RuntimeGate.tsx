@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { Boxes, RefreshCw, TerminalSquare } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "../../components/ui/button";
 import type { Readiness } from "../../lib/types";
 
 /**
@@ -37,7 +39,7 @@ export function RuntimeGate({ children }: { children: React.ReactNode }) {
   // Nothing on screen during the first check. It takes a few hundred milliseconds, and flashing
   // a setup screen at someone whose machine is fine would be worse than a brief blank.
   if (!readiness) {
-    return <div className="h-full bg-neutral-950" />;
+    return <div className="h-full" />;
   }
 
   if (readiness.state === "ready") {
@@ -45,29 +47,31 @@ export function RuntimeGate({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center bg-neutral-950 px-8 text-neutral-200">
-      <div className="w-full max-w-lg">
-        <h1 className="text-[15px] font-semibold text-neutral-100">
-          AgentDeck needs the Claude Code CLI
+    <div className="flex h-full flex-col items-center justify-center px-8 text-deck-text">
+      <div className="animate-rise w-full max-w-lg">
+        <div className="mb-5 flex items-center gap-2 text-deck-live">
+          <Boxes className="size-5" />
+          <span className="text-[14px] font-semibold tracking-tight">AgentDeck</span>
+        </div>
+
+        <h1 className="text-[17px] leading-snug font-semibold">
+          One thing to set up first
         </h1>
-        <p className="mt-1 text-[12px] text-neutral-500">
-          Agents are <code className="text-neutral-400">claude</code> processes. AgentDeck runs and
-          supervises them — it never handles your credentials.
+        <p className="mt-1.5 text-[12px] leading-relaxed text-deck-dim">
+          Agents are <code className="font-mono text-deck-text">claude</code> processes. AgentDeck
+          runs and supervises them — there is no account here and it never sees your credentials.
         </p>
 
-        <div className="mt-4 rounded border border-neutral-800 bg-neutral-900/60 p-3">
+        <div className="glass mt-5 rounded-[var(--radius-panel)] p-4">
           <Problem readiness={readiness} />
         </div>
 
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            onClick={() => void check()}
-            disabled={checking}
-            className="rounded bg-neutral-100 px-2.5 py-1 text-[12px] font-medium text-neutral-900 hover:bg-white disabled:opacity-40"
-          >
+        <div className="mt-4 flex items-center gap-3">
+          <Button variant="primary" size="lg" onClick={() => void check()} disabled={checking}>
+            <RefreshCw className={checking ? "animate-spin" : undefined} />
             {checking ? "Checking…" : "Check again"}
-          </button>
-          <span className="text-[11px] text-neutral-600">
+          </Button>
+          <span className="text-[11px] leading-relaxed text-deck-faint">
             Run the command in a terminal, then check again — no restart needed.
           </span>
         </div>
@@ -123,11 +127,14 @@ function Fix({
 }) {
   return (
     <>
-      <div className="text-[13px] text-amber-300">{title}</div>
-      <p className="mt-1 text-[11px] leading-relaxed text-neutral-400">{detail}</p>
-      <code className="mt-2 block rounded bg-neutral-950 px-2 py-1.5 font-mono text-[11px] text-neutral-300">
-        {command}
-      </code>
+      <div className="text-[13px] font-medium text-deck-attention">{title}</div>
+      <p className="mt-1.5 text-[11.5px] leading-relaxed text-deck-dim">{detail}</p>
+      {/* The command is the whole point of this screen, so it is set as one: selectable, in
+          monospace, visually separated from the prose explaining it. */}
+      <div className="mt-3 flex items-center gap-2 rounded-md border border-white/8 bg-black/40 px-2.5 py-2">
+        <TerminalSquare className="size-3.5 shrink-0 text-deck-faint" />
+        <code className="font-mono text-[11.5px] text-deck-live select-all">{command}</code>
+      </div>
     </>
   );
 }

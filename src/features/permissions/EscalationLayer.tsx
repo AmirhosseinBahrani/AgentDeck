@@ -17,8 +17,8 @@ export function EscalationLayer() {
 
   return (
     <>
-      <div className="flex h-8 shrink-0 items-center justify-between border-b border-amber-700/60 bg-amber-950/50 px-3">
-        <span className="text-[12px] text-amber-200">
+      <div className="flex h-8 shrink-0 items-center justify-between border-b border-deck-attention/30 bg-deck-attention/12 px-3">
+        <span className="text-[12px] text-deck-attention">
           {open.length === 1
             ? "An agent needs your decision"
             : `${open.length} agents need your decision`}
@@ -63,14 +63,14 @@ function PermissionDialog({
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="w-full max-w-xl rounded-lg border border-neutral-700 bg-neutral-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-2.5">
-          <h2 className="text-[13px] font-semibold text-neutral-100">Permission required</h2>
+      <div className="w-full max-w-xl rounded-lg border border-white/12 bg-white/4 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/8 px-4 py-2.5">
+          <h2 className="text-[13px] font-semibold text-deck-text">Permission required</h2>
           {/* A silent auto-deny is the worst failure mode here, so the deadline is always shown. */}
           {remaining !== null && (
             <span
               className={`font-mono text-[11px] ${
-                expired ? "text-red-400" : remaining < 60_000 ? "text-amber-400" : "text-neutral-500"
+                expired ? "text-deck-danger" : remaining < 60_000 ? "text-deck-attention" : "text-deck-faint"
               }`}
             >
               {expired ? "declined — no response" : `auto-declines in ${formatRemaining(remaining)}`}
@@ -80,12 +80,12 @@ function PermissionDialog({
 
         <div className="space-y-3 px-4 py-3">
           <Field label="Agent wants to use">
-            <span className="font-mono text-sky-400">{escalation.tool}</span>
+            <span className="font-mono text-deck-live">{escalation.tool}</span>
           </Field>
 
           {escalation.blockedPath && (
             <Field label="Blocked path">
-              <span className="font-mono break-all text-neutral-300">
+              <span className="font-mono break-all text-deck-dim">
                 {escalation.blockedPath}
               </span>
             </Field>
@@ -93,12 +93,12 @@ function PermissionDialog({
 
           {escalation.reasonType && (
             <Field label="Reason">
-              <span className="text-neutral-300">{describeReason(escalation.reasonType)}</span>
+              <span className="text-deck-dim">{describeReason(escalation.reasonType)}</span>
             </Field>
           )}
 
           <Field label="Input">
-            <pre className="max-h-40 overflow-auto rounded bg-neutral-950 p-2 font-mono text-[11px] text-neutral-400">
+            <pre className="max-h-40 overflow-auto rounded bg-black/30 p-2 font-mono text-[11px] text-deck-dim">
               {JSON.stringify(escalation.input, null, 2)}
             </pre>
           </Field>
@@ -107,7 +107,7 @@ function PermissionDialog({
             <Field label="Claude suggests">
               <ul className="space-y-0.5">
                 {escalation.suggestions.map((s, i) => (
-                  <li key={i} className="text-[11px] text-neutral-400">
+                  <li key={i} className="text-[11px] text-deck-dim">
                     {/* Rendered from the CLI's structured suggestion, never parsed from prose. */}
                     {describeSuggestion(s)}
                   </li>
@@ -117,24 +117,24 @@ function PermissionDialog({
           )}
 
           {error && (
-            <p className="rounded border border-red-900/60 bg-red-950/40 px-2 py-1.5 text-[11px] text-red-300">
+            <p className="rounded border border-deck-danger/35 bg-deck-danger/12 px-2 py-1.5 text-[11px] text-deck-danger">
               Could not apply your answer: {error}
             </p>
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-neutral-800 px-4 py-2.5">
+        <div className="flex items-center justify-end gap-2 border-t border-white/8 px-4 py-2.5">
           <button
             disabled={busy}
             onClick={() => void answer(false)}
-            className="rounded border border-neutral-700 px-3 py-1.5 text-[12px] text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+            className="rounded border border-white/12 px-3 py-1.5 text-[12px] text-deck-dim hover:bg-white/8 disabled:opacity-50"
           >
             Decline
           </button>
           <button
             disabled={busy}
             onClick={() => void answer(true)}
-            className="rounded bg-amber-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-amber-500 disabled:opacity-50"
+            className="rounded-md bg-deck-attention px-3 py-1.5 text-[12px] font-medium text-deck-void transition-all hover:brightness-110 active:translate-y-px disabled:opacity-50"
           >
             Allow once
           </button>
@@ -147,7 +147,7 @@ function PermissionDialog({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="mb-0.5 text-[10px] tracking-wider text-neutral-500 uppercase">{label}</div>
+      <div className="mb-0.5 text-[10px] tracking-wider text-deck-faint uppercase">{label}</div>
       <div className="text-[12px]">{children}</div>
     </div>
   );

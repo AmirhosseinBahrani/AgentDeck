@@ -651,3 +651,59 @@ pub struct DecisionRecord {
     #[serde(default)]
     pub cost_usd: Option<f64>,
 }
+
+// ---------------------------------------------------------------------------
+// D6 — the fix a review's findings call for
+// ---------------------------------------------------------------------------
+
+/// A follow-up task the supervisor creates from a reviewer's findings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FixTask {
+    pub title: String,
+    /// Who should do it. Validated against the roster; a role that does not exist is rejected.
+    pub role: String,
+    pub description: String,
+    /// How to prove it worked. Empty is legal — the project default is injected as usual.
+    #[serde(default)]
+    pub verify_command: String,
+}
+
+pub fn fix_task_schema(roles: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "role", "description"],
+        "properties": {
+            "title": { "type": "string", "minLength": 3, "maxLength": 120 },
+            "role": { "type": "string", "enum": roles },
+            "description": { "type": "string", "minLength": 3, "maxLength": 2000 },
+            "verify_command": { "type": "string", "maxLength": 500 }
+        }
+    })
+}
+
+/// Checks a proposed fix before it becomes work.
+///
+/// The role is whitelisted rather than trusted. `--json-schema` already constrains it to the
+/// enum, but the schema is enforced by the CLI and this is enforced by us — and the whole point
+/// of the validation ladder is that a model's answer never reaches state on the strength of one
+/// check that happens somewhere else.
+pub fn validate_fix_task(fix: &FixTask, roles: &[String]) -> Vec<String> {
+    let mut faults = Vec::new();
+
+    if fix.title.trim().is_empty() {
+        faults.push("the fix has no title".into());
+    }
+    if fix.description.trim().is_empty() {
+        faults.push("the fix says nothing about what to do".into());
+    }
+    if !roles.iter().any(|r| r == &fix.role) {
+        faults.push(format!(
+            "role {:?} is not on this team; it must be one of {}",
+            fix.role,
+            roles.join(", ")
+        ));
+    }
+
+    faults
+}

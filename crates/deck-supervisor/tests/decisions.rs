@@ -422,3 +422,56 @@ fn a_planned_task_carrying_only_judgment_criteria_is_repaired_before_use() {
     assert_eq!(repairs.len(), 1);
     assert!(planned.contract.has_executable_criterion());
 }
+
+// ---------------------------------------------------------------------------
+// D6 — routing a review's findings to whoever can act on them
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_fix_may_only_be_aimed_at_a_role_that_exists() {
+    // The situation: a reviewer reports that the README documents `python`, which is not on this
+    // machine. It cannot fix that itself — the file belongs to another task, already complete —
+    // so the supervisor routes the finding. Aiming it at a role nobody holds would produce a task
+    // no agent is eligible for, which sits in the graph forever looking like progress.
+    use deck_supervisor::decision::{validate_fix_task, FixTask};
+
+    let roles = vec!["developer".to_string(), "docs".to_string()];
+
+    let good = FixTask {
+        title: "Correct the README command".into(),
+        role: "docs".into(),
+        description: "python is not on PATH; document python3".into(),
+        verify_command: "python3 test/hello.py".into(),
+    };
+    assert!(validate_fix_task(&good, &roles).is_empty());
+
+    let nobody = FixTask {
+        role: "sre".into(),
+        ..good.clone()
+    };
+    let faults = validate_fix_task(&nobody, &roles);
+    assert_eq!(faults.len(), 1);
+    assert!(faults[0].contains("not on this team"), "{faults:?}");
+
+    let silent = FixTask {
+        description: "  ".into(),
+        ..good.clone()
+    };
+    assert!(
+        !validate_fix_task(&silent, &roles).is_empty(),
+        "a fix that says nothing about what to do is not a fix"
+    );
+}
+
+#[test]
+fn the_fix_schema_constrains_the_role_to_the_roster() {
+    // Belt and braces with the validator above. The CLI enforces the schema and we enforce the
+    // whitelist; a model answer must not reach state on the strength of one check made elsewhere.
+    use deck_supervisor::decision::fix_task_schema;
+
+    let schema = fix_task_schema(&["developer".to_string(), "docs".to_string()]);
+    let role_enum = &schema["properties"]["role"]["enum"];
+    assert_eq!(role_enum[0], "developer");
+    assert_eq!(role_enum[1], "docs");
+    assert_eq!(schema["additionalProperties"], false);
+}

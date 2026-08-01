@@ -63,6 +63,8 @@ export function AdvancedView({ project }: { project: string | null }) {
 
   return (
     <div className="flex min-h-0 grow flex-col gap-6 overflow-y-auto px-7 pt-[18px] pb-[26px]">
+      <Models project={project} />
+
       <Permissions project={project} />
 
       <div className="flex flex-col gap-1">
@@ -141,6 +143,123 @@ export function AdvancedView({ project }: { project: string | null }) {
             </section>
           ))
       )}
+    </div>
+  );
+}
+
+const MODELS: { id: string; label: string; note: string }[] = [
+  { id: "", label: "CLI default", note: "Whatever your installed Claude Code picks" },
+  { id: "claude-opus-4-7", label: "Opus 4.7", note: "Most capable, slowest, dearest" },
+  { id: "claude-sonnet-4-6", label: "Sonnet 4.6", note: "The usual balance" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "Fastest and cheapest" },
+];
+
+/**
+ * Which model works and which supervises.
+ *
+ * Two settings rather than one because the roles have different shapes. Workers run long duplex
+ * sessions doing the engineering; the supervisor makes short schema-constrained decisions —
+ * planning, choosing an assignee, judging a review. A weaker supervisor is a false economy, since
+ * a bad plan wastes every worker's time downstream, while a weaker worker costs only its own task.
+ */
+function Models({ project }: { project: string | null }) {
+  const [worker, setWorker] = useState("");
+  const [supervisor, setSupervisor] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    void invoke<{ worker: string; supervisor: string }>("get_models")
+      .then((m) => {
+        setWorker(m.worker);
+        setSupervisor(m.supervisor);
+      })
+      .catch(() => {});
+  }, [project]);
+
+  async function persist(nextWorker: string, nextSupervisor: string) {
+    setWorker(nextWorker);
+    setSupervisor(nextSupervisor);
+    try {
+      await invoke("save_models", {
+        settings: { worker: nextWorker, supervisor: nextSupervisor },
+      });
+      setStatus("Saved. Applies to the next run — a running agent's model was fixed when it started.");
+    } catch (e) {
+      setStatus(String(e));
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2.5">
+      <SectionRule label="Models" trailing={project ?? undefined} />
+
+      <div className="grid grid-cols-2 gap-4">
+        <ModelPicker
+          label="Agents"
+          hint="Runs the actual work."
+          value={worker}
+          onChange={(v) => void persist(v, supervisor)}
+        />
+        <ModelPicker
+          label="Supervisor"
+          hint="Plans, assigns and judges reviews."
+          value={supervisor}
+          onChange={(v) => void persist(worker, v)}
+        />
+      </div>
+
+      {status && <p className="text-[11px] leading-relaxed text-deck-dim">{status}</p>}
+    </section>
+  );
+}
+
+function ModelPicker({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-baseline gap-2">
+        <span className="label-micro">{label}</span>
+        <span className="text-[10.5px] text-deck-faint">{hint}</span>
+      </div>
+      <div className="flex flex-col gap-1">
+        {MODELS.map((model) => (
+          <button
+            key={model.id || "default"}
+            onClick={() => onChange(model.id)}
+            className={cn(
+              "flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left transition-colors",
+              value === model.id
+                ? "border-deck-live/40 bg-deck-live/[0.08]"
+                : "border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.045]",
+            )}
+          >
+            <span
+              className={cn(
+                "size-2 shrink-0 rounded-full border",
+                value === model.id ? "border-deck-live bg-deck-live" : "border-deck-faint/60",
+              )}
+            />
+            <span
+              className={cn(
+                "shrink-0 text-[12px]",
+                value === model.id ? "text-deck-text" : "text-deck-dim",
+              )}
+            >
+              {model.label}
+            </span>
+            <span className="min-w-0 truncate text-[10.5px] text-deck-faint">{model.note}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

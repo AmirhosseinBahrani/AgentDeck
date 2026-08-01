@@ -330,6 +330,10 @@ pub async fn start_supervisor_run(
         knowledge::render_for_prompt(&memory, &skills)
     };
 
+    let models = deck_core::store::knowledge::models(&state.store, &identity.project_id)
+        .await
+        .unwrap_or_default();
+
     let permissions = deck_core::store::knowledge::permissions(&state.store, &identity.project_id)
         .await
         .unwrap_or_default();
@@ -346,9 +350,10 @@ pub async fn start_supervisor_run(
             identity.clone(),
         )
         .with_knowledge(knowledge)
-        .with_policy(permissions.level, &permissions.extra_bash),
+        .with_policy(permissions.level, &permissions.extra_bash)
+        .with_model(models.worker.clone()),
     );
-    let planner = crate::supervision::CliPlanner::new(repo);
+    let planner = crate::supervision::CliPlanner::new(repo).with_model(models.supervisor.clone());
 
     // Agent activity wakes the loop. Without this the run would only advance on the tick, which
     // would add up to a minute of latency to every handoff.
@@ -1001,6 +1006,41 @@ pub async fn save_permissions(
         &deck_core::store::knowledge::PermissionSettings {
             level: deck_core::permission::PermissionLevel::parse(&settings.level),
             extra_bash: settings.extra_bash,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Which model does the work and which supervises. Empty string means the CLI's default.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModelsDto {
+    pub worker: String,
+    pub supervisor: String,
+}
+
+#[tauri::command]
+pub async fn get_models(state: State<'_, AppState>) -> Result<ModelsDto, String> {
+    let project_id = state.identity.read().project_id.clone();
+    let settings = deck_core::store::knowledge::models(&state.store, &project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ModelsDto {
+        worker: settings.worker.unwrap_or_default(),
+        supervisor: settings.supervisor.unwrap_or_default(),
+    })
+}
+
+/// Takes effect for the next run. A live agent's model was fixed when its process started.
+#[tauri::command]
+pub async fn save_models(state: State<'_, AppState>, settings: ModelsDto) -> Result<(), String> {
+    let project_id = state.identity.read().project_id.clone();
+    deck_core::store::knowledge::save_models(
+        &state.store,
+        &project_id,
+        &deck_core::store::knowledge::ModelSettings {
+            worker: Some(settings.worker),
+            supervisor: Some(settings.supervisor),
         },
     )
     .await

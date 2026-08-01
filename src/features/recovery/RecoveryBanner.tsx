@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { RotateCcw, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, ChevronRight, RotateCcw, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import type { RecoveryReport, ResumableSummary } from "../../lib/types";
@@ -21,6 +21,10 @@ export function RecoveryBanner() {
   const [dismissed, setDismissed] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Collapsed by default. A bad crash leaves a session per agent per task, and rendering all of
+  // them inline turned a one-line notice into a full-height wall that covered the screen the
+  // operator was trying to start their next run from.
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -76,38 +80,58 @@ export function RecoveryBanner() {
       </div>
 
       {resumable.length > 0 && (
-        <ul className="mt-1.5 space-y-1">
-          {resumable.map((session) => (
-            <li key={session.session_id} className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-deck-dim">
-                {session.session_id.slice(0, 8)}
-              </span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-deck-faint">
-                {session.cwd}
-              </span>
-              {session.resumable ? (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void resume(session.session_id)}
-                  disabled={busy === session.session_id}
-                >
-                  <RotateCcw />
-                  {busy === session.session_id ? "Reopening…" : "Reopen"}
-                </Button>
-              ) : (
-                // Stated rather than left to a failed click: the worktree is gone, and Claude
-                // buckets conversations by directory, so this one is unreachable for good.
-                <span
-                  className="text-deck-faint"
-                  title="Its worktree was removed, which deletes the conversation with it"
-                >
-                  worktree gone
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+        <>
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1 flex items-center gap-1 text-[10.5px] text-deck-attention/80 transition-colors hover:text-deck-attention"
+          >
+            {expanded ? (
+              <ChevronDown className="size-3" />
+            ) : (
+              <ChevronRight className="size-3" />
+            )}
+            {expanded ? "Hide" : "Show"} {resumable.length} reopenable session
+            {resumable.length === 1 ? "" : "s"}
+          </button>
+
+          {expanded && (
+            <ul className="mt-1.5 max-h-[168px] space-y-1 overflow-y-auto pr-1">
+              {resumable.map((session) => (
+                <li key={session.session_id} className="flex items-center gap-2">
+                  <span className="shrink-0 font-mono text-[10px] text-deck-dim">
+                    {session.session_id.slice(0, 8)}
+                  </span>
+                  <span
+                    className="min-w-0 flex-1 truncate font-mono text-[10px] text-deck-faint"
+                    title={session.cwd}
+                  >
+                    {session.cwd}
+                  </span>
+                  {session.resumable ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void resume(session.session_id)}
+                      disabled={busy === session.session_id}
+                    >
+                      <RotateCcw />
+                      {busy === session.session_id ? "Reopening…" : "Reopen"}
+                    </Button>
+                  ) : (
+                    // Stated rather than left to a failed click: the worktree is gone, and Claude
+                    // buckets conversations by directory, so this one is unreachable for good.
+                    <span
+                      className="shrink-0 text-deck-faint"
+                      title="Its worktree was removed, which deletes the conversation with it"
+                    >
+                      worktree gone
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
 
       {error && <div className="mt-1 text-deck-danger">{error}</div>}

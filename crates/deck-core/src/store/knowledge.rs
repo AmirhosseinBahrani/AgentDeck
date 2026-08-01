@@ -382,3 +382,56 @@ pub async fn save_permissions(
     .await?;
     Ok(())
 }
+
+/// Which model runs the work and which supervises.
+///
+/// `None` on either means the CLI's own default, which is deliberately representable: pinning a
+/// model id is a decision that goes stale, and a project that never chose should follow whatever
+/// the installed CLI considers current.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelSettings {
+    pub worker: Option<String>,
+    pub supervisor: Option<String>,
+}
+
+pub async fn models(store: &Store, project_id: &str) -> Result<ModelSettings, StoreError> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT worker_model, supervisor_model FROM project_models WHERE project_id = ?1",
+    )
+    .bind(project_id)
+    .fetch_optional(store.reader())
+    .await?;
+
+    Ok(row
+        .map(|(worker, supervisor)| ModelSettings {
+            worker: worker.filter(|m| !m.trim().is_empty()),
+            supervisor: supervisor.filter(|m| !m.trim().is_empty()),
+        })
+        .unwrap_or_default())
+}
+
+pub async fn save_models(
+    store: &Store,
+    project_id: &str,
+    settings: &ModelSettings,
+) -> Result<(), StoreError> {
+    let clean = |m: &Option<String>| {
+        m.as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    sqlx::query(
+        "INSERT INTO project_models (project_id, worker_model, supervisor_model, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (project_id) DO UPDATE SET
+             worker_model = ?2, supervisor_model = ?3, updated_at = ?4",
+    )
+    .bind(project_id)
+    .bind(clean(&settings.worker))
+    .bind(clean(&settings.supervisor))
+    .bind(now_ms())
+    .execute(store.writer())
+    .await?;
+    Ok(())
+}

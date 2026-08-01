@@ -59,6 +59,8 @@ pub fn run() {
             events::agent_metrics,
             events::get_permissions,
             events::save_permissions,
+            events::get_models,
+            events::save_models,
             events::resume_session,
             events::approve_dispatch,
             events::force_kill_agent,

@@ -321,17 +321,18 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
             runActive={running}
           />
 
-          <section className="flex min-h-0 flex-col gap-1.5">
+          <section className="flex shrink-0 flex-col gap-1.5">
             <SectionRule
               label="Team"
               trailing={`max ${snapshot?.max_concurrent ?? 0} concurrent`}
               className="pb-2"
             />
-            {/* Scrolls within its own height rather than growing the column. A roster of eight
-                pushed the task graph off the bottom of the page — and the graph is the thing you
-                look at to see whether the run is progressing, so the roster growing must not be
-                what hides it. */}
-            <div className="flex max-h-[38vh] min-h-0 flex-col overflow-y-auto pr-1">
+            {/* Capped by max-height, not by flex. A roster of eight pushed the task graph off
+                the page, but the first fix used `flex min-h-0`, which in a scrolling column lets
+                the box shrink all the way to zero — so on a short window the whole team vanished
+                and the next heading drew over the button beneath it. A plain block with a ceiling
+                cannot collapse. */}
+            <div className="max-h-[38vh] overflow-y-auto pr-1">
               <AgentRoster
                 agents={snapshot?.agents ?? []}
                 onOpenSession={(id) => onOpenSession(id)}

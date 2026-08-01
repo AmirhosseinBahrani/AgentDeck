@@ -73,6 +73,9 @@ pub struct Run {
     pub titles: HashMap<TaskId, String>,
     /// Live session per dispatched task, so the app can attach a transcript view or kill it.
     pub sessions: HashMap<TaskId, deck_core::domain::ids::SessionId>,
+    /// The branch each task's work is on, recorded at dispatch. The roster shows it, and the
+    /// registry that knows it is not reachable from a snapshot.
+    pub branches: HashMap<TaskId, String>,
     /// Tasks whose agent has claimed completion and are awaiting verification.
     pub awaiting_verification: Vec<TaskId>,
     /// Dispatches a human has approved. Consumed on use, so approving once starts one agent.
@@ -96,6 +99,7 @@ impl Run {
             roles: HashMap::new(),
             titles: HashMap::new(),
             sessions: HashMap::new(),
+            branches: HashMap::new(),
             awaiting_verification: Vec::new(),
             approved: HashSet::new(),
             awaiting_approval: Vec::new(),
@@ -923,6 +927,9 @@ impl<'a> Driver<'a> {
                     if let Ok(next) = apply(&current, TaskEvent::Started) {
                         run.graph.set_state(next);
                         run.sessions.insert(id, agent.session_id);
+                        if let Some(branch) = self.workspaces.branch(id) {
+                            run.branches.insert(id, branch);
+                        }
                         started.push(id);
                         run.log.record_code_decision(
                             run.state.iteration,

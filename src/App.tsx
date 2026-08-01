@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Boxes, PanelsTopLeft } from "lucide-react";
+import { TitleBar } from "./features/shell/TitleBar";
+import type { RunSnapshot } from "./lib/types";
 import { useEffect, useState } from "react";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
@@ -42,6 +44,17 @@ export default function App() {
 function Deck() {
   useEventPump();
 
+  // Polled here as well as in TeamView: the title bar is outside the view and still has to show
+  // the autonomy mode the supervisor is actually enforcing.
+  const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
+  useEffect(() => {
+    const read = () =>
+      void invoke<RunSnapshot>("get_run_snapshot").then(setSnapshot).catch(() => {});
+    read();
+    const id = setInterval(read, 2000);
+    return () => clearInterval(id);
+  }, []);
+
   const [fixtures, setFixtures] = useState<string[]>([]);
   const [sessions, setSessions] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -65,40 +78,38 @@ function Deck() {
 
   return (
     <div className="relative flex h-full flex-col text-deck-text">
-      <header className="glass-flat flex h-10 shrink-0 items-center justify-between border-b border-white/8 px-3">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5 text-[13px] font-semibold tracking-tight">
-            <Boxes className="size-4 text-deck-live" />
-            AgentDeck
-          </span>
-          <nav className="flex gap-0.5 rounded-md border border-white/8 bg-black/20 p-0.5">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setView(tab.id)}
-                className={cn(
-                  "flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] transition-colors",
-                  view === tab.id
-                    ? "bg-white/12 font-medium text-deck-text"
-                    : "text-deck-faint hover:text-deck-dim",
-                )}
-              >
-                {tab.icon}
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-        </div>
+      <TitleBar
+        project={snapshot?.objective ? "run in progress" : "no run"}
+        autonomy={snapshot?.autonomy ?? "assisted"}
+        running={!!snapshot?.active}
+      />
+
+      <nav className="glass-flat flex h-8 shrink-0 items-center gap-0.5 border-b border-white/[0.07] px-3">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setView(tab.id)}
+            className={cn(
+              "flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] transition-colors",
+              view === tab.id
+                ? "bg-white/12 font-medium text-deck-text"
+                : "text-deck-faint hover:text-deck-dim",
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+        <div className="grow" />
         {/* Pump telemetry. Kept because a growing gap count is the first sign the event bridge
             is dropping batches, and that is invisible everywhere else. */}
-        <div className="flex items-center gap-3 font-mono text-[10px] text-deck-faint">
-          <span>{stats.batches} batches</span>
+        <span className="flex items-center gap-3 font-mono text-[10px] text-deck-faint">
           <span>{stats.events} events</span>
           <span className={stats.gaps > 0 ? "text-deck-attention" : undefined}>
             {stats.gaps} gaps
           </span>
-        </div>
-      </header>
+        </span>
+      </nav>
 
       {/* Outside the router and the session panel: an agent can block while the operator is
           looking elsewhere, and a prompt buried in a hidden transcript would time out unseen. */}

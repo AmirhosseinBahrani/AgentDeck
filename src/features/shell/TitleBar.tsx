@@ -1,4 +1,5 @@
-import { FolderGit2, Search } from "lucide-react";
+import { FolderGit2, Loader2, Search } from "lucide-react";
+import { useEffect, useState } from "react";
 import type { Autonomy } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
@@ -15,12 +16,16 @@ export function TitleBar({
   onChangeProject,
   autonomy,
   running,
+  phase,
+  startedAt,
 }: {
   project: string;
   projectPath?: string;
   onChangeProject: () => void;
   autonomy: Autonomy;
   running: boolean;
+  phase: string;
+  startedAt: number;
 }) {
   return (
     <header
@@ -65,6 +70,8 @@ export function TitleBar({
 
       <div className="grow" />
 
+      {running && <RunStatus phase={phase} startedAt={startedAt} />}
+
       <AutonomyPill mode={autonomy} running={running} />
 
       <label className="flex h-[27px] w-[200px] shrink-0 items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2.5">
@@ -77,6 +84,61 @@ export function TitleBar({
       </label>
     </header>
   );
+}
+
+/**
+ * What the supervisor is doing right now, and for how long.
+ *
+ * Planning is a single model call that can take the better part of a minute, during which the
+ * roster is idle and the task list is empty — a truthful picture of the state that reads exactly
+ * like a run that failed to start. The elapsed counter is the part that does the work: a spinner
+ * alone cannot distinguish "thinking" from "wedged", and knowing which is what stops someone
+ * pressing Stop on a run that was about to produce something.
+ */
+function RunStatus({ phase, startedAt }: { phase: string; startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const seconds = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
+  const busy = !["completed", "failed", "cancelled", "blockedonhuman"].includes(phase);
+
+  return (
+    <span
+      title="What the supervisor is doing, and how long the run has been going"
+      className="flex h-[26px] items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-[11px]"
+    >
+      {busy && <Loader2 className="size-3 shrink-0 animate-spin text-deck-live" />}
+      <span className="font-mono text-[10.5px] tracking-[0.04em] text-deck-dim">
+        {phaseLabel(phase)}
+      </span>
+      <span className="font-mono text-[10.5px] tabular-nums text-deck-faint">
+        {formatElapsed(seconds)}
+      </span>
+    </span>
+  );
+}
+
+function phaseLabel(phase: string): string {
+  const labels: Record<string, string> = {
+    planning: "planning",
+    dispatching: "starting agents",
+    monitoring: "working",
+    reviewing: "reviewing",
+    replanning: "replanning",
+    blockedonhuman: "needs you",
+  };
+  return labels[phase] ?? phase;
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const mins = Math.floor(seconds / 60);
+  if (mins < 60) return `${mins}m ${String(seconds % 60).padStart(2, "0")}s`;
+  return `${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
 }
 
 function AutonomyPill({ mode, running }: { mode: Autonomy; running: boolean }) {

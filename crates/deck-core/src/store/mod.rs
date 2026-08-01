@@ -8,6 +8,7 @@
 pub mod agents;
 pub mod events;
 pub mod identity;
+pub mod knowledge;
 pub mod processes;
 pub mod runs;
 pub mod sessions;

@@ -946,16 +946,34 @@ impl<'a> Driver<'a> {
             run.approved.insert(id);
         }
 
-        let ready: Vec<TaskId> = run
+        let mut ready: Vec<TaskId> = run
             .graph
             .tasks()
             .filter(|t| deck_core::domain::task::is_dispatchable(t))
             .map(|t| t.id)
             .collect();
+        // Sorted so the cap below takes the same tasks on every iteration. The graph stores tasks
+        // in a HashMap, and without this a queued task could be picked one iteration and skipped
+        // the next, starving it for no reason a decision log would explain.
+        ready.sort();
+
+        // Counted rather than tracked: a task that is Running holds a live process. Review does
+        // not — the session is parked at that point — so counting it would leave slots idle while
+        // work waited.
+        let mut in_flight = run
+            .graph
+            .tasks()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count();
 
         run.awaiting_approval.clear();
         let mut started = Vec::new();
         for id in ready {
+            if in_flight >= self.config.limits.max_concurrent_agents {
+                // Left Assigned, so the next iteration picks it up as a free slot appears. Not an
+                // escalation and not a failure — the plan is fine, there is just no room yet.
+                break;
+            }
             let Some(current) = run.graph.get(id).cloned() else {
                 continue;
             };
@@ -996,6 +1014,7 @@ impl<'a> Driver<'a> {
                     // Running on intent would consume an attempt for work that never began.
                     if let Ok(next) = apply(&current, TaskEvent::Started) {
                         run.graph.set_state(next);
+                        in_flight += 1;
                         run.sessions.insert(id, agent.session_id);
                         if let Some(branch) = self.workspaces.branch(id) {
                             run.branches.insert(id, branch);
@@ -1166,16 +1185,74 @@ impl<'a> Driver<'a> {
             let Some(contract) = run.contracts.get(&task_id).cloned() else {
                 continue;
             };
-            let criterion_ids: Vec<String> = contract
+            // Only the judgement criteria. The executable ones were decided by running them,
+            // and asking for a verdict on those invited the reviewer either to contradict a
+            // measured result or, more often, to give up — which is what "inconclusive" was.
+            let judged_criteria: Vec<&crate::contract::Criterion> = contract
                 .acceptance_criteria
                 .iter()
-                .map(|c| c.id.clone())
+                .filter(|c| !c.verify.is_executable())
                 .collect();
 
+            if judged_criteria.is_empty() {
+                // Nothing left for a model to weigh in on. Calling one anyway would spend a
+                // request to be told what the gate already established.
+                if let Some(current) = run.graph.get(task_id).cloned() {
+                    if let Ok(next) = apply(&current, TaskEvent::ReviewPassed) {
+                        run.graph.set_state(next);
+                    }
+                }
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::Judge,
+                    "review_verdict",
+                    "no_judgment_criteria",
+                    "every criterion was executable and already passed; no reviewer needed",
+                );
+                continue;
+            }
+
+            let criterion_ids: Vec<String> = judged_criteria.iter().map(|c| c.id.clone()).collect();
+
+            let title = run
+                .titles
+                .get(&task_id)
+                .cloned()
+                .unwrap_or_else(|| task_id.to_string());
+
+            // Spelled out. The schema constrains which ids are legal, but an id is not a
+            // question — the reviewer was previously asked to return a verdict per criterion
+            // without ever being told what any of them said.
+            let criteria_text: String = judged_criteria
+                .iter()
+                .map(|c| {
+                    let rubric = match &c.verify {
+                        crate::contract::Verification::Judgment { rubric } => rubric.as_str(),
+                        _ => "",
+                    };
+                    if rubric.trim().is_empty() {
+                        format!("- {} — {}\n", c.id, c.text)
+                    } else {
+                        format!("- {} — {}\n  How to judge: {rubric}\n", c.id, c.text)
+                    }
+                })
+                .collect();
+
+            let branch = self
+                .workspaces
+                .branch(task_id)
+                .map(|b| format!("The work is on branch `{b}`.\n"))
+                .unwrap_or_default();
+
             let prompt = format!(
-                "Review this work against its contract.\n\nDefinition of done: {}\n\n\
-                 Every executable criterion has already been verified by running it; you are \
-                 judging only the criteria that require judgement.\n",
+                "Review this work against its contract.\n\n\
+                 Task: {title}\n\
+                 Definition of done: {}\n{branch}\n\
+                 Every executable criterion has already been run and passed, so those are \
+                 settled and are not yours to revisit. Judge exactly these, and return a verdict \
+                 for every one:\n\n{criteria_text}\n\
+                 Use `inconclusive` only if the criteria themselves are unanswerable — not \
+                 because you would like more information.\n",
                 contract.definition_of_done
             );
 

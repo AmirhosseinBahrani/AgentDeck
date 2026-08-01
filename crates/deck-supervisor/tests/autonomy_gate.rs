@@ -641,3 +641,51 @@ async fn answering_an_unknown_id_changes_nothing() {
     assert!(!run.answer("not-a-real-id", EscalationAnswer::Reintegrate));
     assert_eq!(run.escalations.len(), 1, "the real question must survive");
 }
+
+#[tokio::test]
+async fn no_more_than_the_cap_may_be_working_at_once() {
+    // There was no cap at all: every assigned task dispatched, so a wide plan spawned every agent
+    // in the same instant. On subscription billing that shows up as a wave of throttled agents
+    // rather than as one legible "too many at once", which is a far harder thing to diagnose.
+    let root = workdir("concurrency-cap");
+    let mut cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    cfg.limits.max_concurrent_agents = 2;
+
+    let planner = ScriptedPlanner::new();
+    planner.push(
+        json!({
+            "tasks": (0..5).map(|i| json!({
+                "tmp_id": format!("t{i}"), "title": format!("Task {i}"), "role": "developer",
+                "objective_gate": true, "description": "",
+                "contract": {
+                    "version": 1,
+                    "acceptance_criteria": [{
+                        "id": format!("c{i}"), "text": "it works",
+                        "verify": { "type": "command", "cmd": "true", "expect_exit_zero": true }
+                    }],
+                    "constraints": [], "deliverables": [], "definition_of_done": "done"
+                }
+            })).collect::<Vec<_>>(),
+            "edges": [], "reasoning": "five independent tasks"
+        }),
+        0.10,
+    );
+
+    let workspaces = FakeWorkspaces::new(root);
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+
+    assert_eq!(dispatched.len(), 2, "the cap is the cap");
+    assert_eq!(
+        run.graph
+            .tasks()
+            .filter(|t| t.status == TaskStatus::Assigned)
+            .count(),
+        3,
+        "the rest stay assigned and wait for a slot rather than failing or escalating"
+    );
+}

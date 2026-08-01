@@ -19,7 +19,8 @@ export type NavTab =
   | "decisions"
   | "supervisor"
   | "memory"
-  | "skills";
+  | "skills"
+  | "advanced";
 
 const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
   { id: "team", label: "Team", ready: true },
@@ -30,6 +31,7 @@ const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
   { id: "supervisor", label: "Supervisor", ready: true },
   { id: "memory", label: "Memory", ready: true },
   { id: "skills", label: "Skills", ready: true },
+  { id: "advanced", label: "Advanced", ready: true },
 ];
 
 export function NavTabs({

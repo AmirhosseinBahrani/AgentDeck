@@ -111,7 +111,7 @@ fn a_repository_with_claude_md_and_skills_is_discovered() {
     )
     .unwrap();
 
-    let found = knowledge::discover(&dir);
+    let found = knowledge::discover_with_home(&dir, None);
     assert_eq!(
         found.memory.as_deref(),
         Some("Migrations are hand-written.")
@@ -130,7 +130,58 @@ fn a_repository_with_nothing_documented_discovers_nothing() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
 
-    assert_eq!(knowledge::discover(&dir), knowledge::Discovered::default());
+    assert_eq!(
+        knowledge::discover_with_home(&dir, None),
+        knowledge::Discovered::default()
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn personal_skills_are_found_but_arrive_switched_off() {
+    // `~/.claude/skills` is the operator's own set and most of it will not apply to any given
+    // repository. Every enabled skill costs tokens on every spawn, so these are offered rather
+    // than imposed — visible in the list, contributing nothing until switched on.
+    let base = std::env::temp_dir().join(format!("deck-personal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let repo = base.join("repo");
+    let home = base.join("home");
+    std::fs::create_dir_all(repo.join(".claude/skills/local")).unwrap();
+    std::fs::create_dir_all(home.join(".claude/skills/global")).unwrap();
+    std::fs::create_dir_all(home.join(".claude/skills/local")).unwrap();
+
+    std::fs::write(
+        repo.join(".claude/skills/local/SKILL.md"),
+        "the project's version",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".claude/skills/global/SKILL.md"),
+        "a personal one",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join(".claude/skills/local/SKILL.md"),
+        "the personal version",
+    )
+    .unwrap();
+
+    let found = knowledge::discover_with_home(&repo, Some(&home));
+
+    assert_eq!(found.skills.len(), 1);
+    assert!(
+        found.skills[0].enabled,
+        "the project's own skills apply here"
+    );
+
+    assert_eq!(
+        found.personal_skills.len(),
+        1,
+        "the personal copy of a skill the repository also defines is dropped"
+    );
+    assert_eq!(found.personal_skills[0].name, "global");
+    assert!(!found.personal_skills[0].enabled);
+
+    let _ = std::fs::remove_dir_all(&base);
 }

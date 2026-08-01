@@ -395,6 +395,7 @@ pub async fn start_supervisor_run(
         // The same id the run is persisted under, shortened for display. Two ids for one run
         // would make the header and the database disagree about which run you are looking at.
         run_id: run_id.chars().take(4).collect(),
+        max_concurrent: config.limits.max_concurrent_agents,
         started_at_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -919,6 +920,45 @@ pub async fn list_agents(
         .map_err(|e| e.to_string())
 }
 
+/// What each agent has done across every run on this project.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AgentMetricsDto {
+    pub agent_id: String,
+    pub name: String,
+    pub role: String,
+    pub sessions: i64,
+    pub tasks_completed: i64,
+    pub tasks_failed: i64,
+    pub attempts: i64,
+    pub review_rounds: i64,
+    pub cost_usd: f64,
+    pub turns: i64,
+    pub last_active_ms: Option<i64>,
+}
+
+#[tauri::command]
+pub async fn agent_metrics(state: State<'_, AppState>) -> Result<Vec<AgentMetricsDto>, String> {
+    let identity = state.identity.read().clone();
+    Ok(deck_core::store::agents::metrics(&state.store, &identity)
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|m| AgentMetricsDto {
+            agent_id: m.agent_id.to_string(),
+            name: m.name,
+            role: m.role,
+            sessions: m.sessions,
+            tasks_completed: m.tasks_completed,
+            tasks_failed: m.tasks_failed,
+            attempts: m.attempts,
+            review_rounds: m.review_rounds,
+            cost_usd: m.cost_usd,
+            turns: m.turns,
+            last_active_ms: m.last_active_ms,
+        })
+        .collect())
+}
+
 /// Adds someone to the team.
 ///
 /// Takes effect from the supervisor's next iteration rather than immediately: assignments are
@@ -932,25 +972,60 @@ pub async fn hire_agent(
     model: Option<String>,
     system_prompt: Option<String>,
     mcp_servers: Option<Vec<String>>,
-) -> Result<deck_core::store::agents::AgentRecord, String> {
+    count: Option<u32>,
+) -> Result<Vec<deck_core::store::agents::AgentRecord>, String> {
     if name.trim().is_empty() || role.trim().is_empty() {
         return Err("an agent needs a name and a role".into());
     }
 
+    // Bounded because each one is a real process the scheduler may start. A typo in this field
+    // should cost a rejected form rather than a hundred rows.
+    let count = count.unwrap_or(1).clamp(1, 20);
     let identity = state.identity.read().clone();
-    deck_core::store::agents::hire(
-        &state.store,
-        &identity,
-        &deck_core::store::agents::NewAgent {
-            name: name.trim().to_string(),
-            role: role.trim().to_lowercase(),
-            model,
-            system_prompt: system_prompt.filter(|p| !p.trim().is_empty()),
-            mcp_servers: mcp_servers.unwrap_or_default(),
-        },
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let role = role.trim().to_lowercase();
+    let base = name.trim().to_string();
+
+    // Agents are keyed by a slug of their name, so hiring several of one role needs distinct
+    // names or the second would overwrite the first. Numbered from the count already on the
+    // roster, so hiring two Developers twice gives four rather than silently replacing two.
+    let existing = deck_core::store::agents::active(&state.store, &identity)
+        .await
+        .map_err(|e| e.to_string())?;
+    let taken: std::collections::HashSet<String> =
+        existing.iter().map(|a| a.name.clone()).collect();
+
+    let mut hired = Vec::new();
+    let mut suffix = 1;
+    for _ in 0..count {
+        let display = if count == 1 && !taken.contains(&base) {
+            base.clone()
+        } else {
+            loop {
+                let candidate = format!("{base} {suffix}");
+                suffix += 1;
+                if !taken.contains(&candidate) {
+                    break candidate;
+                }
+            }
+        };
+
+        let record = deck_core::store::agents::hire(
+            &state.store,
+            &identity,
+            &deck_core::store::agents::NewAgent {
+                name: display,
+                role: role.clone(),
+                model: model.clone(),
+                system_prompt: system_prompt.clone().filter(|p| !p.trim().is_empty()),
+                mcp_servers: mcp_servers.clone().unwrap_or_default(),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        hired.push(record);
+    }
+
+    Ok(hired)
 }
 
 /// What revoking an agent would interrupt.
@@ -1159,6 +1234,8 @@ pub async fn save_project_memory(
 pub struct ImportedKnowledge {
     pub memory_imported: bool,
     pub skills_imported: usize,
+    /// From `~/.claude/skills`, brought in switched off.
+    pub personal_skills_imported: usize,
 }
 
 /// Pulls the repository's own `CLAUDE.md` and `.claude/skills` into project knowledge.
@@ -1211,9 +1288,29 @@ pub async fn import_project_knowledge(
         skills_imported += 1;
     }
 
+    // Only the ones not already here, and never re-enabled. Re-importing must not switch a skill
+    // the operator deliberately turned off back on.
+    let existing = deck_core::store::knowledge::skills(&state.store, &project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    let known: std::collections::HashSet<String> =
+        existing.iter().map(|s| s.name.clone()).collect();
+
+    let mut personal_skills_imported = 0;
+    for skill in found.personal_skills {
+        if known.contains(&skill.name) {
+            continue;
+        }
+        deck_core::store::knowledge::save_skill(&state.store, &project_id, &skill)
+            .await
+            .map_err(|e| e.to_string())?;
+        personal_skills_imported += 1;
+    }
+
     Ok(ImportedKnowledge {
         memory_imported,
         skills_imported,
+        personal_skills_imported,
     })
 }
 
@@ -1564,6 +1661,8 @@ pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot,
 pub struct RunMeta {
     pub run_id: String,
     pub started_at_ms: i64,
+    /// How many agents this run may have working at once.
+    pub max_concurrent: usize,
     /// (id, role, display name) for everyone on the team this run started with.
     pub team: Vec<(deck_core::domain::ids::AgentId, String, String)>,
 }
@@ -1675,7 +1774,10 @@ fn snapshot_of(
     RunSnapshot {
         run_id: meta.run_id.clone(),
         started_at_ms: meta.started_at_ms,
-        max_concurrent: meta.team.len(),
+        // The enforced cap, not the team size. Those were the same number only while every agent
+        // could hold exactly one task, and reporting headcount as a concurrency limit told the
+        // operator nothing about why work was queued.
+        max_concurrent: meta.max_concurrent,
         engaged,
         agents,
         edges,

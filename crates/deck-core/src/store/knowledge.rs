@@ -109,7 +109,12 @@ pub async fn delete_skill(store: &Store, skill_id: &str) -> Result<bool, StoreEr
 pub struct Discovered {
     /// The contents of `CLAUDE.md`, if there is one.
     pub memory: Option<String>,
+    /// From the repository's own `.claude/skills`. Imported switched on: they describe this
+    /// codebase, so an agent working in it should be told them.
     pub skills: Vec<Skill>,
+    /// From `~/.claude/skills`. Imported switched off — they are the operator's personal set and
+    /// most will not apply here, and every enabled skill costs tokens on every single spawn.
+    pub personal_skills: Vec<Skill>,
 }
 
 /// Reads a repository's own `CLAUDE.md` and `.claude/skills`.
@@ -120,40 +125,79 @@ pub struct Discovered {
 /// that change under version control would make a run depend on a branch's contents in a way
 /// nothing in the app showed.
 pub fn discover(repo: &std::path::Path) -> Discovered {
+    discover_with_home(
+        repo,
+        std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
+    )
+}
+
+/// The `HOME` seam exists so a test can point at a scratch directory instead of the real one.
+///
+/// Plugin caches are deliberately not scanned. There are hundreds of skills in there, they belong
+/// to whichever plugin installed them rather than to this project, and a list of that size is not
+/// something anyone would curate — it would just be switched off in bulk.
+pub fn discover_with_home(repo: &std::path::Path, home: Option<&std::path::Path>) -> Discovered {
     let memory = ["CLAUDE.md", "AGENTS.md"]
         .iter()
         .find_map(|name| std::fs::read_to_string(repo.join(name)).ok())
         .map(|c| c.trim().to_string())
         .filter(|c| !c.is_empty());
 
-    let mut skills = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(repo.join(".claude/skills")) {
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            // Both layouts in the wild: `skills/<name>/SKILL.md` and a flat `skills/<name>.md`.
-            let file = if dir.is_dir() {
-                dir.join("SKILL.md")
-            } else if dir.extension().is_some_and(|e| e == "md") {
-                dir.clone()
-            } else {
-                continue;
-            };
-
-            let Ok(raw) = std::fs::read_to_string(&file) else {
-                continue;
-            };
-            let fallback = dir
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            if let Some(skill) = parse_skill_file(&raw, &fallback) {
-                skills.push(skill);
-            }
-        }
-    }
+    let mut skills = read_skill_dir(&repo.join(".claude/skills"));
     skills.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Discovered { memory, skills }
+    let mut personal_skills = match home {
+        Some(home) => read_skill_dir(&home.join(".claude/skills")),
+        None => Vec::new(),
+    };
+    // A repository's own version of a skill wins: it is the more specific claim about the code
+    // being worked on.
+    let project_names: std::collections::HashSet<&str> =
+        skills.iter().map(|s| s.name.as_str()).collect();
+    personal_skills.retain(|s| !project_names.contains(s.name.as_str()));
+    for skill in &mut personal_skills {
+        skill.enabled = false;
+    }
+    personal_skills.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Discovered {
+        memory,
+        skills,
+        personal_skills,
+    }
+}
+
+/// Reads every skill in one directory, in either of the two layouts seen in the wild.
+fn read_skill_dir(dir: &std::path::Path) -> Vec<Skill> {
+    let mut found = Vec::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file = if path.is_dir() {
+            path.join("SKILL.md")
+        } else if path.extension().is_some_and(|e| e == "md") {
+            path.clone()
+        } else {
+            continue;
+        };
+
+        let Ok(raw) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let fallback = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if let Some(skill) = parse_skill_file(&raw, &fallback) {
+            found.push(skill);
+        }
+    }
+    found
 }
 
 /// Pulls `name` and `description` out of YAML frontmatter, falling back to the file's own name.

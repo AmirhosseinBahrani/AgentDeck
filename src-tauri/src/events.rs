@@ -209,7 +209,18 @@ pub async fn start_supervisor_run(
     use deck_supervisor::loop_engine::RunLimits;
     use deck_supervisor::run_loop::{forward_event, RunLoop};
 
-    let repo = state.workspaces.repo().to_path_buf();
+    // Refused rather than attempted. Without a repository there is nowhere to create worktrees
+    // and nothing to verify against, and starting anyway would spend the rate limit producing
+    // work with no home — the packaged app hits this whenever it is opened from Finder, which
+    // gives it a working directory of `/`.
+    let Some(repo) = state.project.clone() else {
+        return Err(
+            "AgentDeck is not inside a git repository, so there is nowhere for agents to work. \
+             Launch it from a repository — `cd <your repo> && open -a AgentDeck .` — or run \
+             `pnpm tauri dev` from one."
+                .into(),
+        );
+    };
 
     // The three seeded roles. Team configuration arrives with the project model; hard-coding them
     // here keeps this honest about what exists rather than pretending to read config.

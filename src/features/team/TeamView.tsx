@@ -67,11 +67,19 @@ export function TeamView({
     return () => clearInterval(id);
   }, [refresh]);
 
-  async function start() {
+  const start = () => startWith(objective);
+
+  // Takes the objective as an argument rather than reading state: a new project starts its first
+  // run in the same tick the field is set, and state would still hold the previous value.
+  async function startWith(text: string) {
     setBusy(true);
     setError(null);
     try {
-      await invoke("start_supervisor_run", { objective, maxCostUsd: 5.0, autonomy });
+      await invoke("start_supervisor_run", {
+        objective: text,
+        maxCostUsd: 5.0,
+        autonomy,
+      });
       await refresh();
     } catch (e) {
       setError(String(e));
@@ -278,6 +286,10 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
             onSwitched={() => {
               onProjectChanged();
               void refresh();
+            }}
+            onStarted={(firstObjective) => {
+              setObjective(firstObjective);
+              void startWith(firstObjective);
             }}
             runActive={running}
           />

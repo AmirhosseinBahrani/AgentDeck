@@ -152,13 +152,13 @@ function Deck() {
 
       {view === "memory" && (
         <div className="flex min-h-0 flex-1 flex-col">
-          <MemoryView />
+          <MemoryView project={project?.name ?? null} />
         </div>
       )}
 
       {view === "skills" && (
         <div className="flex min-h-0 flex-1 flex-col">
-          <SkillsView />
+          <SkillsView project={project?.name ?? null} />
         </div>
       )}
 

@@ -14,12 +14,15 @@ import { SectionRule } from "../../components/ui/section-rule";
  * Saved explicitly rather than as you type. What is written here is fed to real agents that spend
  * real budget, and autosaving would mean a half-finished sentence reaching the next spawn.
  */
-export function MemoryView() {
+export function MemoryView({ project }: { project: string | null }) {
   const [content, setContent] = useState("");
   const [saved, setSaved] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Keyed on the project so switching repositories reloads rather than showing the last one's
+  // notes. These are per-project on the Rust side, and a stale view would invite editing the
+  // wrong project's memory.
   useEffect(() => {
     void invoke<string>("get_project_memory")
       .then((c) => {
@@ -27,7 +30,7 @@ export function MemoryView() {
         setSaved(c);
       })
       .catch(() => {});
-  }, []);
+  }, [project]);
 
   const dirty = content !== saved;
 
@@ -49,7 +52,7 @@ export function MemoryView() {
     <div className="flex min-h-0 grow flex-col gap-4 px-7 pt-[18px] pb-[26px]">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
-          <SectionRule label="Project memory" />
+          <SectionRule label="Project memory" trailing={project ?? undefined} />
           <p className="max-w-[62ch] text-[11.5px] leading-relaxed text-deck-faint">
             What every agent should already know about this codebase — conventions, things not to
             touch, decisions that are settled. Agents do not read your CLAUDE.md, so this is the

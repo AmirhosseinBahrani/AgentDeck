@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -36,6 +36,23 @@ export function SkillsView({ project }: { project: string | null }) {
     setDraft(null);
     void load();
   }, [load, project]);
+
+  /** Brings in `.claude/skills`, which agents cannot read for themselves. */
+  async function importFromRepo() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await invoke<{ skills_imported: number }>("import_project_knowledge");
+      await load();
+      if (result.skills_imported === 0) {
+        setError("No .claude/skills found in this repository.");
+      }
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save(skill: Skill) {
     setBusy(true);
@@ -129,9 +146,20 @@ export function SkillsView({ project }: { project: string | null }) {
           ))}
         </div>
 
-        <Button variant="ghost" size="sm" className="self-start" onClick={() => setDraft(BLANK)}>
-          <Plus /> New skill
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setDraft(BLANK)}>
+            <Plus /> New skill
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={importFromRepo}
+            disabled={busy}
+            title="Read this repository's .claude/skills and CLAUDE.md"
+          >
+            <Download /> Import from repo
+          </Button>
+        </div>
       </div>
 
       <div className="flex min-w-0 grow flex-col gap-3">

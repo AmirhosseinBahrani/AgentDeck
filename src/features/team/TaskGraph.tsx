@@ -12,10 +12,13 @@ import { cn } from "../../lib/utils";
 export function TaskGraph({
   tasks,
   edges,
+  starting,
   onOpenSession,
 }: {
   tasks: TaskSummary[];
   edges: GraphEdge[];
+  /** Tasks the operator has just approved, before the supervisor has acted on it. */
+  starting?: Set<string>;
   onOpenSession: (sessionId: string) => void;
 }) {
   if (tasks.length === 0) {
@@ -33,7 +36,12 @@ export function TaskGraph({
       {columns.map((column, i) => (
         <div key={i} className="flex shrink-0 flex-col gap-2">
           {column.map((task) => (
-            <GraphNode key={task.id} task={task} onOpenSession={onOpenSession} />
+            <GraphNode
+              key={task.id}
+              task={task}
+              starting={starting?.has(task.id) ?? false}
+              onOpenSession={onOpenSession}
+            />
           ))}
         </div>
       ))}
@@ -43,14 +51,19 @@ export function TaskGraph({
 
 function GraphNode({
   task,
+  starting,
   onOpenSession,
 }: {
   task: TaskSummary;
+  starting: boolean;
   onOpenSession: (sessionId: string) => void;
 }) {
   const done = task.status === "completed";
   const running = task.status === "running" || task.status === "review";
-  const blocked = task.status === "blocked" || task.awaiting_approval;
+  // Starting outranks blocked. An approved task is still flagged awaiting_approval until the
+  // supervisor's next iteration, and leaving it amber would show the operator's click having no
+  // effect on the one node it was aimed at.
+  const blocked = !starting && (task.status === "blocked" || task.awaiting_approval);
 
   return (
     <button
@@ -58,10 +71,11 @@ function GraphNode({
       disabled={!task.session_id}
       className={cn(
         "flex w-[152px] flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
-        running && "border-deck-live/40 bg-deck-live/[0.09]",
+        starting && "ring-live animate-live border-deck-live/60 bg-deck-live/[0.14]",
+        running && !starting && "border-deck-live/40 bg-deck-live/[0.09]",
         blocked && "border-deck-attention/40 bg-deck-attention/[0.09]",
         done && "border-white/[0.07] bg-white/[0.03]",
-        !running && !blocked && !done && "border-white/[0.06] bg-white/[0.015]",
+        !starting && !running && !blocked && !done && "border-white/[0.06] bg-white/[0.015]",
         task.session_id ? "cursor-pointer hover:brightness-125" : "cursor-default",
       )}
     >
@@ -69,15 +83,19 @@ function GraphNode({
         <span
           className={cn(
             "size-1.5 shrink-0 rounded-full",
-            running && "animate-live bg-deck-live",
+            (running || starting) && "animate-live bg-deck-live",
             blocked && "bg-deck-attention",
             done && "bg-deck-done",
-            !running && !blocked && !done && "border border-deck-faint/60",
+            !starting && !running && !blocked && !done && "border border-deck-faint/60",
           )}
         />
         <span className="font-mono text-[9.5px] text-deck-faint">{task.id.slice(0, 8)}</span>
-        {task.objective_gate && (
-          <span className="ml-auto font-mono text-[9px] text-deck-faint">gate</span>
+        {starting ? (
+          <span className="ml-auto font-mono text-[9px] text-deck-live">starting</span>
+        ) : (
+          task.objective_gate && (
+            <span className="ml-auto font-mono text-[9px] text-deck-faint">gate</span>
+          )
         )}
       </span>
       <span

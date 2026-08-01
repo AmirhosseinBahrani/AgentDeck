@@ -55,6 +55,7 @@ pub fn run() {
             events::delete_skill,
             events::create_project,
             events::suggest_project_location,
+            events::import_project_knowledge,
             events::resume_session,
             events::approve_dispatch,
             events::force_kill_agent,

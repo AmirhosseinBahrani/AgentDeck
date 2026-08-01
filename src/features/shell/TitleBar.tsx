@@ -37,18 +37,34 @@ export function TitleBar({
       <div className="flex w-16 shrink-0 items-center gap-2" />
 
       <div className="flex items-center gap-2.5">
-        <svg width="15" height="15" viewBox="0 0 16 16" className="shrink-0">
-          <rect
-            x="1"
-            y="1"
-            width="14"
-            height="14"
-            rx="4"
-            fill="none"
+        {/* The hub and its eight workers: the org model the whole app is built on, which is
+            also what the app icon shows. */}
+        <svg width="16" height="16" viewBox="0 0 16 16" className="shrink-0">
+          <g
             stroke="var(--color-deck-live)"
-            strokeWidth="1.4"
-          />
-          <circle cx="8" cy="8" r="2.6" fill="var(--color-deck-live)" />
+            strokeWidth="1.15"
+            strokeLinecap="round"
+            fill="none"
+          >
+          <line x1="8.00" y1="4.90" x2="8.00" y2="3.10" />
+          <circle cx="8.00" cy="1.90" r="1.15" />
+          <line x1="10.19" y1="5.81" x2="11.46" y2="4.54" />
+          <circle cx="12.31" cy="3.69" r="1.15" />
+          <line x1="11.10" y1="8.00" x2="12.90" y2="8.00" />
+          <circle cx="14.10" cy="8.00" r="1.15" />
+          <line x1="10.19" y1="10.19" x2="11.46" y2="11.46" />
+          <circle cx="12.31" cy="12.31" r="1.15" />
+          <line x1="8.00" y1="11.10" x2="8.00" y2="12.90" />
+          <circle cx="8.00" cy="14.10" r="1.15" />
+          <line x1="5.81" y1="10.19" x2="4.54" y2="11.46" />
+          <circle cx="3.69" cy="12.31" r="1.15" />
+          <line x1="4.90" y1="8.00" x2="3.10" y2="8.00" />
+          <circle cx="1.90" cy="8.00" r="1.15" />
+          <line x1="5.81" y1="5.81" x2="4.54" y2="4.54" />
+          <circle cx="3.69" cy="3.69" r="1.15" />
+            <circle cx="8" cy="8" r="2.9" />
+          </g>
+          <circle cx="8" cy="8" r="1.5" fill="var(--color-deck-live)" />
         </svg>
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-deck-text">
           AgentDeck

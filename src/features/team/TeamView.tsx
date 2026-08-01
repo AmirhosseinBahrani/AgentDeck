@@ -43,6 +43,7 @@ export function TeamView({
   const [busy, setBusy] = useState(false);
   const [answering, setAnswering] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [starting, setStarting] = useState<Set<string>>(() => new Set());
   const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
   const [now, setNow] = useState(Date.now());
   const [hiring, setHiring] = useState(false);
@@ -164,14 +165,40 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
     }
   }
 
+  /**
+   * Grants one dispatch, and shows that it was granted.
+   *
+   * The supervisor applies approvals on its next iteration, so between the click and the agent
+   * actually starting there is a gap of up to a tick in which the task looks exactly as it did
+   * before. Without a local marker the button reads as broken and gets pressed again.
+   */
   async function approve(taskId: string) {
+    setStarting((prev) => new Set(prev).add(taskId));
     try {
       await invoke("approve_dispatch", { taskId });
       await refresh();
     } catch (e) {
       setError(String(e));
+      setStarting((prev) => {
+        const next = new Set(prev);
+        next.delete(taskId);
+        return next;
+      });
     }
   }
+
+  // Cleared by the snapshot rather than by a timer: the marker exists to cover the wait for the
+  // supervisor, so the supervisor having acted is exactly when it should go.
+  useEffect(() => {
+    if (starting.size === 0) return;
+    const stillHeld = new Set(
+      (snapshot?.tasks ?? []).filter((t) => t.awaiting_approval).map((t) => t.id),
+    );
+    setStarting((prev) => {
+      const next = new Set([...prev].filter((id) => stillHeld.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [snapshot, starting.size]);
 
   const running = !!(snapshot?.active && snapshot.phase !== "");
   const tasks = snapshot?.tasks ?? [];
@@ -326,6 +353,7 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
               <TaskGraph
                 tasks={tasks}
                 edges={snapshot?.edges ?? []}
+                starting={starting}
                 onOpenSession={(id) => onOpenSession(id)}
               />
             )}
@@ -348,9 +376,18 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
                 variant="attention"
                 size="md"
                 className="mt-3 w-full"
+                disabled={starting.has(task.id)}
                 onClick={() => approve(task.id)}
               >
-                <Play /> Start agent
+                {starting.has(task.id) ? (
+                  <>
+                    <Loader2 className="animate-spin" /> Starting…
+                  </>
+                ) : (
+                  <>
+                    <Play /> Start agent
+                  </>
+                )}
               </Button>
             </div>
           ))}

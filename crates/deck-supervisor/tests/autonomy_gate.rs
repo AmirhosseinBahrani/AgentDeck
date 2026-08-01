@@ -76,11 +76,11 @@ impl ApprovalQueue for Granted {
 }
 
 #[tokio::test]
-async fn an_assisted_run_plans_and_assigns_but_starts_nothing() {
-    // Planning is not the dangerous part. Assisted mode still does the thinking, so the operator
+async fn a_manual_run_plans_and_assigns_but_starts_nothing() {
+    // Planning is not the dangerous part. Manual mode still does the thinking, so the operator
     // has something concrete to approve rather than an empty screen and a prompt.
-    let root = workdir("assisted-holds");
-    let cfg = config(root.clone(), Autonomy::Assisted, "true");
+    let root = workdir("manual-holds");
+    let cfg = config(root.clone(), Autonomy::Manual, "true");
     let planner = ScriptedPlanner::new();
     planner.push(one_task_plan("true"), 0.10);
     let workspaces = FakeWorkspaces::new(root);
@@ -112,8 +112,8 @@ async fn an_assisted_run_plans_and_assigns_but_starts_nothing() {
 
 #[tokio::test]
 async fn approving_a_task_starts_exactly_that_agent() {
-    let root = workdir("assisted-approve");
-    let cfg = config(root.clone(), Autonomy::Assisted, "true");
+    let root = workdir("manual-approve");
+    let cfg = config(root.clone(), Autonomy::Manual, "true");
     let planner = ScriptedPlanner::new();
     planner.push(one_task_plan("true"), 0.10);
     let workspaces = FakeWorkspaces::new(root);
@@ -143,10 +143,10 @@ async fn approving_a_task_starts_exactly_that_agent() {
 async fn an_approval_authorises_one_start_and_not_the_next() {
     // The subtle failure: if approval were a sticky flag rather than a token, approving once
     // would silently authorise every future retry of the same task — which is precisely the
-    // unattended behaviour the operator chose Assisted to avoid.
+    // unattended behaviour the operator chose Manual to avoid.
     let root = workdir("one-shot");
     // A criterion that cannot pass, so the task comes back for another attempt.
-    let cfg = config(root.clone(), Autonomy::Assisted, "false");
+    let cfg = config(root.clone(), Autonomy::Manual, "false");
     let planner = ScriptedPlanner::new();
     planner.push(one_task_plan("false"), 0.10);
     let workspaces = FakeWorkspaces::new(root);
@@ -226,28 +226,33 @@ async fn a_manual_run_hands_a_failure_back_instead_of_retrying_it() {
 
 #[tokio::test]
 async fn an_assisted_run_still_retries_a_failure_on_its_own() {
-    // The counterpart to the test above: only Manual suppresses retries. Assisted is about who
-    // starts an agent, not about whether the supervisor may try again.
+    // Retrying is what still separates Assisted from Manual now that neither the operator nor
+    // the supervisor is asked before an agent starts.
     let root = workdir("assisted-retry");
     let cfg = config(root.clone(), Autonomy::Assisted, "false");
     let planner = ScriptedPlanner::new();
     planner.push(one_task_plan("false"), 0.10);
     let workspaces = FakeWorkspaces::new(root);
-    let approvals = Granted::default();
 
-    let driver = Driver::new(&cfg, &planner, &workspaces).with_approvals(&approvals);
+    let driver = Driver::new(&cfg, &planner, &workspaces);
     let mut run = Run::new();
 
-    driver.step(&mut run, true).await;
-    let held = *run.awaiting_approval.first().expect("one task held");
-    approvals.grant(held);
-    driver.step(&mut run, true).await;
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    assert_eq!(
+        dispatched.len(),
+        1,
+        "assisted starts its own agents — only Manual holds them"
+    );
+    assert!(run.awaiting_approval.is_empty(), "and holds nothing back");
 
-    claim_done(&mut run, held);
+    let task = dispatched[0];
+    claim_done(&mut run, task);
     driver.step(&mut run, true).await;
 
     assert_ne!(
-        run.graph.get(held).unwrap().status,
+        run.graph.get(task).unwrap().status,
         TaskStatus::Blocked,
         "assisted mode should still be willing to try again"
     );
@@ -474,7 +479,7 @@ async fn a_task_that_is_merely_waiting_is_never_reaped() {
     // `None` means no agent was ever started, which is a scheduling state rather than a death.
     // Treating it as one would fail every task the moment it was assigned.
     let root = workdir("reap-waiting");
-    let cfg = config(root.clone(), Autonomy::Assisted, "true");
+    let cfg = config(root.clone(), Autonomy::Manual, "true");
     let planner = ScriptedPlanner::new();
     planner.push(one_task_plan("true"), 0.10);
     let workspaces = FakeWorkspaces::new(root);

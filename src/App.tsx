@@ -110,7 +110,17 @@ function Deck() {
 
       {view === "team" ? (
         <div className="min-h-0 flex-1">
-          <TeamView onOpenSession={() => setView("sessions")} />
+          <TeamView
+            onOpenSession={(sessionId) => {
+              // Registering it here is what makes a real agent reachable: the list was only ever
+              // fed by fixture replay, so a live session had no entry to select.
+              if (sessionId) {
+                setSessions((prev) => (prev.includes(sessionId) ? prev : [...prev, sessionId]));
+                setActive(sessionId);
+              }
+              setView("sessions");
+            }}
+          />
         </div>
       ) : (
       <div className="flex min-h-0 flex-1">

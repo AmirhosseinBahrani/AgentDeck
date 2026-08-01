@@ -14,6 +14,7 @@ pub mod cli_planner;
 pub mod contract;
 pub mod decision;
 pub mod driver;
+pub mod escalation;
 pub mod graph;
 pub mod loop_engine;
 pub mod planner;

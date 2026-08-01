@@ -7,6 +7,7 @@
 use crate::autonomy::{ApprovalQueue, Autonomy, NoApprovals};
 use crate::contract::{run_gate, validate_and_repair, GateOutcome, TaskContract};
 use crate::decision::*;
+use crate::escalation::{AnswerQueue, Escalation, EscalationAnswer, EscalationKind, NoAnswers};
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
 use crate::loop_engine::*;
 use crate::planner::{Decisions, Planner};
@@ -79,6 +80,9 @@ pub struct Run {
     /// Tasks that would have started but are waiting on a human. Surfaced so the operator can
     /// see what their attention is holding up rather than watching an apparently idle run.
     pub awaiting_approval: Vec<TaskId>,
+    /// Questions the run needs answered. Records rather than a counter, because a number tells
+    /// the operator that they are needed without telling them what for.
+    pub escalations: Vec<Escalation>,
 }
 
 impl Run {
@@ -95,7 +99,101 @@ impl Run {
             awaiting_verification: Vec::new(),
             approved: HashSet::new(),
             awaiting_approval: Vec::new(),
+            escalations: Vec::new(),
         }
+    }
+
+    /// Raises a question for the operator and parks the run on it.
+    ///
+    /// Deduplicated by (kind, task): a sweep runs every couple of seconds, and without this the
+    /// same unanswered question would pile up until the inbox was unreadable.
+    pub fn escalate(
+        &mut self,
+        kind: EscalationKind,
+        task_id: Option<TaskId>,
+        question: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
+        if self
+            .escalations
+            .iter()
+            .any(|e| e.kind == kind && e.task_id == task_id)
+        {
+            return;
+        }
+        self.escalations.push(Escalation::new(
+            kind,
+            task_id,
+            question,
+            detail,
+            self.state.iteration,
+        ));
+        self.state.open_escalations = self.escalations.len();
+        self.state.phase = RunPhase::BlockedOnHuman;
+    }
+
+    /// Applies a typed answer and unparks the run if nothing else is outstanding.
+    ///
+    /// Returns false for an id that is not open, which is the ordinary result of a double click
+    /// or a stale window — answering the same question twice must not apply it twice.
+    pub fn answer(&mut self, escalation_id: &str, answer: EscalationAnswer) -> bool {
+        let Some(index) = self.escalations.iter().position(|e| e.id == escalation_id) else {
+            return false;
+        };
+        let escalation = self.escalations.remove(index);
+        self.state.open_escalations = self.escalations.len();
+
+        match answer {
+            EscalationAnswer::RetryPlanning => {
+                // Clearing the graph is what makes the Plan stage run again; it guards on empty.
+                self.graph = TaskGraph::new();
+                self.contracts.clear();
+                self.roles.clear();
+                self.titles.clear();
+            }
+            EscalationAnswer::RetryTask { task_id } => {
+                if let Some(current) = self.graph.get(task_id).cloned() {
+                    let mut next = current.clone();
+                    // Refund the attempt the failure consumed, otherwise "try again" would be
+                    // refused immediately by the very cap that raised this question.
+                    next.attempts = next.attempts.saturating_sub(1);
+                    next.status = TaskStatus::Queued;
+                    next.failure_reason = None;
+                    self.graph.set_state(next);
+                }
+            }
+            EscalationAnswer::AbandonTask { task_id } => {
+                if let Some(current) = self.graph.get(task_id).cloned() {
+                    if let Ok(next) = apply(&current, TaskEvent::Cancelled) {
+                        self.graph.set_state(next);
+                    }
+                }
+            }
+            EscalationAnswer::Reintegrate => {
+                self.state.integrated = false;
+            }
+            EscalationAnswer::CancelRun => {
+                self.state.phase = RunPhase::Cancelled;
+                return true;
+            }
+        }
+
+        self.log.record_human_decision(
+            self.state.iteration,
+            Stage::Escalate,
+            "escalation_answered",
+            &format!(
+                "{:?} answered for {:?}",
+                escalation.kind, escalation.task_id
+            ),
+        );
+
+        // Only resume once nothing else is outstanding; unparking with questions still open
+        // would let the run carry on past a decision the operator has not made.
+        if self.escalations.is_empty() {
+            self.state.phase = RunPhase::Monitoring;
+        }
+        true
     }
 
     fn load_of(&self, agent: AgentId) -> usize {
@@ -129,6 +227,7 @@ pub struct Driver<'a> {
     pub workspaces: &'a dyn Workspaces,
     pub reports: &'a dyn ReportQueue,
     pub approvals: &'a dyn ApprovalQueue,
+    pub answers: &'a dyn AnswerQueue,
 }
 
 impl<'a> Driver<'a> {
@@ -143,6 +242,7 @@ impl<'a> Driver<'a> {
             workspaces,
             reports: &NoReports,
             approvals: &NoApprovals,
+            answers: &NoAnswers,
         }
     }
 
@@ -159,8 +259,21 @@ impl<'a> Driver<'a> {
         self
     }
 
+    /// Supplies answers to open escalations.
+    pub fn with_answers(mut self, answers: &'a dyn AnswerQueue) -> Self {
+        self.answers = answers;
+        self
+    }
+
     /// Runs one iteration if the sweep says it is warranted.
     pub async fn step(&self, run: &mut Run, dirty: bool) -> IterationOutcome {
+        // Before the sweep, not after. An answer that arrived while the run was parked has to be
+        // visible to the very check that decides whether it is still parked — applying it later
+        // would leave the run blocked for one more cycle on a question already answered.
+        for (id, answer) in self.answers.drain() {
+            run.answer(&id, answer);
+        }
+
         let outcome = sweep(&run.state, &run.graph, self.config.limits, dirty);
 
         for note in &outcome.notes {
@@ -176,6 +289,9 @@ impl<'a> Driver<'a> {
         if let Some(phase) = outcome.terminal {
             run.state.phase = phase;
             return IterationOutcome::Terminal(phase);
+        }
+        if let Some(phase) = outcome.phase {
+            run.state.phase = phase;
         }
         if !outcome.should_iterate {
             return IterationOutcome::Idle;
@@ -254,7 +370,17 @@ impl<'a> Driver<'a> {
             // Nothing left to try is a decision only a human can take further, so it is raised
             // rather than left as a quietly failed task nobody is told about.
             if !attempts_left {
-                run.state.open_escalations += 1;
+                let title = run
+                    .titles
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| id.to_string());
+                run.escalate(
+                    EscalationKind::AttemptsExhausted,
+                    Some(id),
+                    format!("\u{201c}{title}\u{201d} has run out of attempts"),
+                    "Its agent exited without claiming the task done, every time.".to_string(),
+                );
             }
 
             run.log.record_code_decision(
@@ -337,8 +463,19 @@ impl<'a> Driver<'a> {
                 task_id,
                 files,
             } => {
-                run.state.open_escalations += 1;
-                run.state.phase = RunPhase::BlockedOnHuman;
+                run.escalate(
+                    EscalationKind::IntegrationConflict,
+                    None,
+                    "Two agents produced work that will not merge",
+                    format!(
+                        "{branch} conflicts with work already merged, in: {}",
+                        if files.is_empty() {
+                            "unknown files".to_string()
+                        } else {
+                            files.join(", ")
+                        }
+                    ),
+                );
                 run.log.record_code_decision(
                     run.state.iteration,
                     Stage::CompletionCheck,
@@ -359,8 +496,12 @@ impl<'a> Driver<'a> {
             // fault, so blaming one by reopening it would send an agent to fix code that is
             // correct on its own.
             IntegrationOutcome::TestsFailed { output } => {
-                run.state.open_escalations += 1;
-                run.state.phase = RunPhase::BlockedOnHuman;
+                run.escalate(
+                    EscalationKind::IntegrationBroken,
+                    None,
+                    "Every task passed, but the branches do not work together",
+                    output.clone(),
+                );
                 run.log.record_code_decision(
                     run.state.iteration,
                     Stage::CompletionCheck,
@@ -371,8 +512,12 @@ impl<'a> Driver<'a> {
             }
 
             IntegrationOutcome::Inconclusive { reason } => {
-                run.state.open_escalations += 1;
-                run.state.phase = RunPhase::BlockedOnHuman;
+                run.escalate(
+                    EscalationKind::IntegrationBroken,
+                    None,
+                    "The branches could not be merged and tested",
+                    reason.clone(),
+                );
                 run.log.record_code_decision(
                     run.state.iteration,
                     Stage::CompletionCheck,
@@ -428,7 +573,17 @@ impl<'a> Driver<'a> {
                             run.graph.set_state(next);
                         }
                     }
-                    run.state.open_escalations += 1;
+                    let title = run
+                        .titles
+                        .get(&task_id)
+                        .cloned()
+                        .unwrap_or_else(|| task_id.to_string());
+                    run.escalate(
+                        EscalationKind::TaskBlocked,
+                        Some(task_id),
+                        format!("\u{201c}{title}\u{201d} is blocked"),
+                        reason.clone(),
+                    );
                     run.log.record_code_decision(
                         run.state.iteration,
                         Stage::IngestReports,
@@ -510,8 +665,14 @@ impl<'a> Driver<'a> {
         let Some(plan) = plan else {
             // No deterministic fallback exists for planning — code cannot invent a decomposition.
             // Escalating is the honest outcome.
-            run.state.phase = RunPhase::BlockedOnHuman;
-            run.state.open_escalations += 1;
+            run.escalate(
+                EscalationKind::PlanningFailed,
+                None,
+                "The objective could not be turned into a plan",
+                unreachable
+                    .clone()
+                    .unwrap_or_else(|| describe_faults(&faults)),
+            );
             let mut errors: Vec<String> = faults.iter().map(|f| f.to_string()).collect();
             let rationale = match &unreachable {
                 Some(detail) => {
@@ -775,8 +936,12 @@ impl<'a> Driver<'a> {
                 Err(e) => {
                     // A worktree or spawn failure is an environment problem, not the agent's
                     // fault, so it escalates rather than burning the task's retry budget.
-                    run.state.open_escalations += 1;
-                    run.state.phase = RunPhase::BlockedOnHuman;
+                    run.escalate(
+                        EscalationKind::DispatchFailed,
+                        Some(id),
+                        format!("Could not start an agent for \u{201c}{title}\u{201d}"),
+                        e.to_string(),
+                    );
                     run.log.record_code_decision(
                         run.state.iteration,
                         Stage::Dispatch,
@@ -836,7 +1001,17 @@ impl<'a> Driver<'a> {
                             reason: reason.clone(),
                         }
                     } else {
-                        run.state.open_escalations += 1;
+                        let title = run
+                            .titles
+                            .get(&task_id)
+                            .cloned()
+                            .unwrap_or_else(|| task_id.to_string());
+                        run.escalate(
+                            EscalationKind::TaskBlocked,
+                            Some(task_id),
+                            format!("\u{201c}{title}\u{201d} failed its checks"),
+                            reason.clone(),
+                        );
                         TaskEvent::Blocked {
                             reason: reason.clone(),
                         }
@@ -878,8 +1053,17 @@ impl<'a> Driver<'a> {
                 }
                 GateOutcome::Inconclusive { reason } => {
                     // Not a review round: the work was never judged.
-                    run.state.open_escalations += 1;
-                    run.state.phase = RunPhase::BlockedOnHuman;
+                    let title = run
+                        .titles
+                        .get(&task_id)
+                        .cloned()
+                        .unwrap_or_else(|| task_id.to_string());
+                    run.escalate(
+                        EscalationKind::TaskBlocked,
+                        Some(task_id),
+                        format!("\u{201c}{title}\u{201d} could not be checked"),
+                        reason.clone(),
+                    );
                     run.log.record_code_decision(
                         run.state.iteration,
                         Stage::Verify,
@@ -940,20 +1124,15 @@ impl<'a> Driver<'a> {
                     ),
                     Ok(Verdict::Inconclusive) => {
                         // Never coerced either way; a human decides.
-                        run.state.open_escalations += 1;
                         (None, vec!["reviewer was inconclusive".into()], cost)
                     }
                     Err(faults) => {
                         // A self-contradictory verdict is not evidence of anything, so it must
                         // not be applied in either direction.
-                        run.state.open_escalations += 1;
                         (None, faults, cost)
                     }
                 },
-                Err(e) => {
-                    run.state.open_escalations += 1;
-                    (None, vec![e.to_string()], None)
-                }
+                Err(e) => (None, vec![e.to_string()], None),
             };
 
             if let Some(event) = event {
@@ -962,6 +1141,22 @@ impl<'a> Driver<'a> {
                         run.graph.set_state(next);
                     }
                 }
+            } else {
+                // Three ways to get here — the reviewer abstained, contradicted itself, or could
+                // not be reached — and the operator's question is the same in all of them: no
+                // verdict was reached, so a person has to decide. Coercing a pass or a fail from
+                // a non-answer is the one thing the review gate exists to prevent.
+                let title = run
+                    .titles
+                    .get(&task_id)
+                    .cloned()
+                    .unwrap_or_else(|| task_id.to_string());
+                run.escalate(
+                    EscalationKind::TaskBlocked,
+                    Some(task_id),
+                    format!("The reviewer reached no verdict on \u{201c}{title}\u{201d}"),
+                    errors.join("; "),
+                );
             }
 
             run.log.record_model_decision(

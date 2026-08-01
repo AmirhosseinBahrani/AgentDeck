@@ -493,3 +493,146 @@ async fn a_task_that_is_merely_waiting_is_never_reaped() {
     );
     assert_eq!(task.attempts, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Escalations — the run has to be answerable, and the answer has to land
+// ---------------------------------------------------------------------------
+
+/// Answers a test hands to the driver.
+#[derive(Default)]
+struct Answers(parking_lot::Mutex<Vec<(String, deck_supervisor::escalation::EscalationAnswer)>>);
+
+impl deck_supervisor::escalation::AnswerQueue for Answers {
+    fn drain(&self) -> Vec<(String, deck_supervisor::escalation::EscalationAnswer)> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
+#[tokio::test]
+async fn a_blocked_task_raises_a_question_with_answers_attached() {
+    // The failure this replaces: the run parked, the dashboard said a decision was needed, and
+    // there was no question and nothing to click.
+    use deck_core::git::IntegrationOutcome;
+    use deck_supervisor::loop_engine::RunPhase;
+
+    let root = workdir("escalates");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    workspaces.set_integration(IntegrationOutcome::TestsFailed {
+        output: "3 tests failed after merging".into(),
+    });
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    claim_done(&mut run, dispatched[0]);
+    driver.step(&mut run, true).await;
+
+    assert_eq!(run.state.phase, RunPhase::BlockedOnHuman);
+    let escalation = run.escalations.first().expect("a question must be raised");
+    assert!(!escalation.question.trim().is_empty());
+    assert!(
+        !escalation.options.is_empty(),
+        "an unanswerable question is the bug this replaces"
+    );
+    assert!(escalation.detail.contains("3 tests failed"));
+}
+
+#[tokio::test]
+async fn answering_unparks_the_run() {
+    // "It will resume once you answer" has to be true.
+    use deck_core::git::IntegrationOutcome;
+    use deck_supervisor::escalation::EscalationAnswer;
+    use deck_supervisor::loop_engine::RunPhase;
+
+    let root = workdir("unparks");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    workspaces.set_integration(IntegrationOutcome::TestsFailed {
+        output: "broken together".into(),
+    });
+    let answers = Answers::default();
+
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_answers(&answers);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    claim_done(&mut run, dispatched[0]);
+    driver.step(&mut run, true).await;
+    let id = run.escalations[0].id.clone();
+
+    answers.0.lock().push((id, EscalationAnswer::Reintegrate));
+    driver.step(&mut run, true).await;
+
+    assert!(run.escalations.is_empty(), "the question should be closed");
+    assert_ne!(
+        run.state.phase,
+        RunPhase::BlockedOnHuman,
+        "the run must actually resume"
+    );
+}
+
+#[tokio::test]
+async fn retrying_a_task_refunds_the_attempt_that_failed() {
+    // Otherwise "try again" is refused immediately by the very cap that raised the question.
+    use deck_supervisor::escalation::{EscalationAnswer, EscalationKind};
+
+    let root = workdir("refund");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let task = dispatched[0];
+    let spent = run.graph.get(task).unwrap().attempts;
+
+    run.escalate(EscalationKind::AttemptsExhausted, Some(task), "q", "d");
+    let id = run.escalations[0].id.clone();
+    assert!(run.answer(&id, EscalationAnswer::RetryTask { task_id: task }));
+
+    assert_eq!(run.graph.get(task).unwrap().attempts, spent - 1);
+}
+
+#[tokio::test]
+async fn the_same_question_is_not_asked_twice() {
+    // The sweep runs every couple of seconds. Without dedup an unanswered question would pile
+    // up until the inbox was unreadable.
+    use deck_supervisor::escalation::EscalationKind;
+
+    let root = workdir("dedup");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    let workspaces = FakeWorkspaces::new(root);
+    let _driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    for _ in 0..5 {
+        run.escalate(EscalationKind::IntegrationBroken, None, "same", "detail");
+    }
+    assert_eq!(run.escalations.len(), 1);
+}
+
+#[tokio::test]
+async fn answering_an_unknown_id_changes_nothing() {
+    // A double click or a stale window must not apply an answer twice.
+    use deck_supervisor::escalation::{EscalationAnswer, EscalationKind};
+
+    let mut run = Run::new();
+    run.escalate(EscalationKind::IntegrationBroken, None, "q", "d");
+    assert!(!run.answer("not-a-real-id", EscalationAnswer::Reintegrate));
+    assert_eq!(run.escalations.len(), 1, "the real question must survive");
+}

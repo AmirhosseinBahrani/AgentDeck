@@ -54,6 +54,7 @@ export function HireAgent({
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [prompt, setPrompt] = useState("");
+  const [count, setCount] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,17 +64,19 @@ export function HireAgent({
     setBusy(true);
     setError(null);
     try {
-      const agent = await invoke<AgentRecord>("hire_agent", {
+      const hired = await invoke<AgentRecord[]>("hire_agent", {
         name,
         role: role || name,
         model: null,
         systemPrompt: prompt || null,
         mcpServers: [],
+        count,
       });
-      onHired(agent);
+      hired.forEach(onHired);
       setName("");
       setRole("");
       setPrompt("");
+      setCount(1);
       onClose();
     } catch (e) {
       setError(String(e));
@@ -119,7 +122,7 @@ export function HireAgent({
             </div>
           </Field>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-[1fr_1fr_88px] gap-4">
             <Field label="Name">
               <Input
                 value={name}
@@ -136,6 +139,18 @@ export function HireAgent({
                 value={role}
                 onChange={(e) => setRole(e.target.value)}
                 placeholder="database"
+              />
+            </Field>
+            {/* Several of one role is the normal case, not an edge one: the supervisor picks
+                between same-role agents and spreads the graph across them, so three Developers
+                is how a wide plan gets worked in parallel. */}
+            <Field label="How many" hint="Numbered automatically.">
+              <Input
+                type="number"
+                min={1}
+                max={20}
+                value={String(count)}
+                onChange={(e) => setCount(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
               />
             </Field>
           </div>

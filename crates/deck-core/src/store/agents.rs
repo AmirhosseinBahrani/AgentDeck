@@ -212,3 +212,76 @@ mod tests {
         assert_eq!(slugify("C++ Engineer"), "c-engineer");
     }
 }
+
+/// What one agent has actually done, aggregated across every run on this project.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentMetrics {
+    pub agent_id: AgentId,
+    pub name: String,
+    pub role: String,
+    pub sessions: i64,
+    pub tasks_completed: i64,
+    pub tasks_failed: i64,
+    /// Attempts summed across the agent's tasks. Higher than the task count means rework.
+    pub attempts: i64,
+    pub review_rounds: i64,
+    pub cost_usd: f64,
+    pub turns: i64,
+    pub last_active_ms: Option<i64>,
+}
+
+/// Per-agent totals for the whole project.
+///
+/// Two separate aggregates rather than one join. Summing session cost and task counts in a single
+/// query multiplies one by the cardinality of the other, which silently inflates both — the
+/// classic fan-out that makes a metrics page confidently wrong.
+pub async fn metrics(
+    store: &Store,
+    identity: &LocalIdentity,
+) -> Result<Vec<AgentMetrics>, StoreError> {
+    let roster = active(store, identity).await?;
+
+    let session_rows: Vec<(String, i64, f64, i64, Option<i64>)> = sqlx::query_as(
+        "SELECT agent_id, COUNT(*), COALESCE(SUM(cost_usd), 0), COALESCE(SUM(num_turns), 0),
+                MAX(COALESCE(last_activity_at, ended_at, started_at))
+         FROM sessions WHERE project_id = ?1 GROUP BY agent_id",
+    )
+    .bind(&identity.project_id)
+    .fetch_all(store.reader())
+    .await?;
+
+    let task_rows: Vec<(String, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT assignee_agent_id,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN status IN ('failed', 'cancelled') THEN 1 ELSE 0 END),
+                COALESCE(SUM(attempts), 0), COALESCE(SUM(review_rounds), 0)
+         FROM tasks WHERE project_id = ?1 AND assignee_agent_id IS NOT NULL
+         GROUP BY assignee_agent_id",
+    )
+    .bind(&identity.project_id)
+    .fetch_all(store.reader())
+    .await?;
+
+    Ok(roster
+        .into_iter()
+        .map(|agent| {
+            let key = agent.id.to_string();
+            let session = session_rows.iter().find(|r| r.0 == key);
+            let task = task_rows.iter().find(|r| r.0 == key);
+
+            AgentMetrics {
+                agent_id: agent.id,
+                name: agent.name,
+                role: agent.role,
+                sessions: session.map(|r| r.1).unwrap_or(0),
+                cost_usd: session.map(|r| r.2).unwrap_or(0.0),
+                turns: session.map(|r| r.3).unwrap_or(0),
+                last_active_ms: session.and_then(|r| r.4),
+                tasks_completed: task.map(|r| r.1).unwrap_or(0),
+                tasks_failed: task.map(|r| r.2).unwrap_or(0),
+                attempts: task.map(|r| r.3).unwrap_or(0),
+                review_rounds: task.map(|r| r.4).unwrap_or(0),
+            }
+        })
+        .collect())
+}

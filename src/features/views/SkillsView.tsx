@@ -42,10 +42,18 @@ export function SkillsView({ project }: { project: string | null }) {
     setBusy(true);
     setError(null);
     try {
-      const result = await invoke<{ skills_imported: number }>("import_project_knowledge");
+      const result = await invoke<{
+        skills_imported: number;
+        personal_skills_imported: number;
+      }>("import_project_knowledge");
       await load();
-      if (result.skills_imported === 0) {
-        setError("No .claude/skills found in this repository.");
+      const total = result.skills_imported + result.personal_skills_imported;
+      if (total === 0) {
+        setError("Nothing new — no skills found, or they are all here already.");
+      } else if (result.personal_skills_imported > 0) {
+        setError(
+          `Imported ${total}. The ${result.personal_skills_imported} from ~/.claude/skills came in switched off — turn on the ones that apply here.`,
+        );
       }
     } catch (e) {
       setError(String(e));

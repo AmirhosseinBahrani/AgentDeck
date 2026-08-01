@@ -12,6 +12,7 @@ import { DecisionsView } from "./features/views/DecisionsView";
 import { DiffsView } from "./features/views/DiffsView";
 import { SupervisorView } from "./features/views/SupervisorView";
 import { TaskGraphView } from "./features/views/TaskGraphView";
+import { AdvancedView } from "./features/views/AdvancedView";
 import { MemoryView } from "./features/views/MemoryView";
 import { SkillsView } from "./features/views/SkillsView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
@@ -159,6 +160,12 @@ function Deck() {
       {view === "skills" && (
         <div className="flex min-h-0 flex-1 flex-col">
           <SkillsView project={project?.name ?? null} />
+        </div>
+      )}
+
+      {view === "advanced" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <AdvancedView project={project?.name ?? null} />
         </div>
       )}
 

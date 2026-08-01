@@ -56,6 +56,7 @@ pub fn run() {
             events::create_project,
             events::suggest_project_location,
             events::import_project_knowledge,
+            events::agent_metrics,
             events::resume_session,
             events::approve_dispatch,
             events::force_kill_agent,

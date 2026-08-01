@@ -95,6 +95,13 @@ pub struct RunLimits {
     pub max_iterations: u32,
     pub max_cost_usd: f64,
     pub max_replans: u32,
+    /// How many agents may be working at once.
+    ///
+    /// There was no cap at all: every assigned task dispatched, so a plan with twenty independent
+    /// tasks spawned twenty processes in the same instant. On subscription billing the binding
+    /// constraint is the rolling usage limit rather than dollars, and hitting it mid-run surfaces
+    /// as a wave of throttled agents rather than as one legible "too many at once".
+    pub max_concurrent_agents: usize,
 }
 
 impl Default for RunLimits {
@@ -103,6 +110,7 @@ impl Default for RunLimits {
             max_iterations: 200,
             max_cost_usd: 25.0,
             max_replans: 3,
+            max_concurrent_agents: 20,
         }
     }
 }

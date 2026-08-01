@@ -105,6 +105,7 @@ export interface RunSnapshot {
   /** Whether the branches have been merged and tested together. */
   integrated: boolean;
   escalations: Escalation[];
+  guidance: Guidance[];
   /** Short run id for the header — enough to tell two runs apart, not the full uuid. */
   run_id: string;
   started_at_ms: number;
@@ -261,4 +262,24 @@ export interface FolderInfo {
   is_repository: boolean;
   /** False for a repository with no commits, which cannot host a worktree yet. */
   has_commits: boolean;
+}
+
+/** Something the operator told the supervisor to take into account. */
+export interface Guidance {
+  id: string;
+  text: string;
+  given_at_iteration: number;
+  replan: boolean;
+}
+
+/** A run this project has had before. */
+export interface PastRunSummary {
+  run_id: string;
+  objective: string;
+  status: string;
+  autonomy: string;
+  iteration: number;
+  spent_usd: number;
+  task_count: number;
+  decision_count: number;
 }

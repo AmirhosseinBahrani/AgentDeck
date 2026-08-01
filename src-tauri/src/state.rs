@@ -71,6 +71,8 @@ pub struct AppState {
     /// same reason reports are: a click lands whenever it lands, and mutating the graph
     /// mid-iteration would change it underneath a stage already reading it.
     pub pending_answers: crate::supervision::SharedAnswers,
+    /// Standing instructions the operator has sent but the driver has not yet folded in.
+    pub pending_guidance: crate::supervision::SharedGuidance,
     /// Identifies this launch, so agents recorded by a previous one can be told apart from
     /// agents belonging to a second instance running right now.
     pub boot: BootId,
@@ -198,6 +200,7 @@ impl AppState {
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_approvals: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            pending_guidance: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,
             identity,
             project: Arc::new(parking_lot::RwLock::new(project)),

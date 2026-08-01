@@ -9,6 +9,7 @@ use crate::contract::{run_gate, validate_and_repair, GateOutcome, TaskContract};
 use crate::decision::*;
 use crate::escalation::{AnswerQueue, Escalation, EscalationAnswer, EscalationKind, NoAnswers};
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
+use crate::guidance::{Guidance, GuidanceQueue, NoGuidance};
 use crate::loop_engine::*;
 use crate::planner::{Decisions, Planner};
 use crate::workspaces::{render_brief, DispatchRequest, NoReports, ReportQueue, Workspaces};
@@ -86,6 +87,8 @@ pub struct Run {
     /// Questions the run needs answered. Records rather than a counter, because a number tells
     /// the operator that they are needed without telling them what for.
     pub escalations: Vec<Escalation>,
+    /// Standing instructions from the operator, folded into planning and assignment prompts.
+    pub guidance: Vec<Guidance>,
 }
 
 impl Run {
@@ -104,6 +107,7 @@ impl Run {
             approved: HashSet::new(),
             awaiting_approval: Vec::new(),
             escalations: Vec::new(),
+            guidance: Vec::new(),
         }
     }
 
@@ -232,6 +236,7 @@ pub struct Driver<'a> {
     pub reports: &'a dyn ReportQueue,
     pub approvals: &'a dyn ApprovalQueue,
     pub answers: &'a dyn AnswerQueue,
+    pub guidance: &'a dyn GuidanceQueue,
 }
 
 impl<'a> Driver<'a> {
@@ -247,6 +252,7 @@ impl<'a> Driver<'a> {
             reports: &NoReports,
             approvals: &NoApprovals,
             answers: &NoAnswers,
+            guidance: &NoGuidance,
         }
     }
 
@@ -269,6 +275,12 @@ impl<'a> Driver<'a> {
         self
     }
 
+    /// Supplies standing instructions from the operator.
+    pub fn with_guidance(mut self, guidance: &'a dyn GuidanceQueue) -> Self {
+        self.guidance = guidance;
+        self
+    }
+
     /// Runs one iteration if the sweep says it is warranted.
     pub async fn step(&self, run: &mut Run, dirty: bool) -> IterationOutcome {
         // Before the sweep, not after. An answer that arrived while the run was parked has to be
@@ -276,6 +288,28 @@ impl<'a> Driver<'a> {
         // would leave the run blocked for one more cycle on a question already answered.
         for (id, answer) in self.answers.drain() {
             run.answer(&id, answer);
+        }
+
+        // Applied before the sweep, like answers: guidance that asks for a replan has to be
+        // visible to the check that decides whether there is anything to do this iteration.
+        for note in self.guidance.drain() {
+            run.log.record_human_decision(
+                run.state.iteration,
+                Stage::Plan,
+                "operator_guidance",
+                &note.text,
+            );
+            if note.replan {
+                // Clearing the graph is what makes the Plan stage run again — it guards on
+                // empty. Contracts and titles go with it so nothing survives that described a
+                // task the new plan may not contain.
+                run.graph = TaskGraph::new();
+                run.contracts.clear();
+                run.roles.clear();
+                run.titles.clear();
+                run.state.integrated = false;
+            }
+            run.guidance.push(note);
         }
 
         let outcome = sweep(&run.state, &run.graph, self.config.limits, dirty);
@@ -620,7 +654,7 @@ impl<'a> Driver<'a> {
         let roles = self.config.roles();
         let decisions = Decisions::new(self.planner);
 
-        let prompt = self.plan_prompt(&roles, None);
+        let prompt = self.plan_prompt(&roles, &run.guidance, None);
         let first = decisions
             .plan(prompt, plan_schema(), self.config.per_call_budget_usd)
             .await;
@@ -638,7 +672,8 @@ impl<'a> Driver<'a> {
                 } else {
                     // Exactly one repair round-trip. Looping here is how a bad prompt would
                     // silently consume the whole budget.
-                    let retry_prompt = self.plan_prompt(&roles, Some(&describe_faults(&faults)));
+                    let retry_prompt =
+                        self.plan_prompt(&roles, &run.guidance, Some(&describe_faults(&faults)));
                     match decisions
                         .plan(retry_prompt, plan_schema(), self.config.per_call_budget_usd)
                         .await
@@ -768,7 +803,7 @@ impl<'a> Driver<'a> {
         run.state.phase = RunPhase::Dispatching;
     }
 
-    fn plan_prompt(&self, roles: &[String], repair: Option<&str>) -> String {
+    fn plan_prompt(&self, roles: &[String], notes: &[Guidance], repair: Option<&str>) -> String {
         let mut prompt = format!(
             "Decompose this objective into tasks for a small engineering team.\n\n\
              Objective: {}\n\n\
@@ -781,6 +816,10 @@ impl<'a> Driver<'a> {
             self.config.objective,
             roles.join(", "),
         );
+        if let Some(notes) = crate::guidance::render(notes) {
+            prompt.push('\n');
+            prompt.push_str(&notes);
+        }
         if let Some(feedback) = repair {
             prompt.push('\n');
             prompt.push_str(feedback);

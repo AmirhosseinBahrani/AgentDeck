@@ -16,6 +16,7 @@ pub mod decision;
 pub mod driver;
 pub mod escalation;
 pub mod graph;
+pub mod guidance;
 pub mod loop_engine;
 pub mod planner;
 pub mod run_loop;

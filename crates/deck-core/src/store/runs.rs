@@ -191,6 +191,51 @@ pub struct PastRun {
     pub decision_count: i64,
 }
 
+/// Recent runs, newest first.
+///
+/// The objective is the reusable part. A run cannot literally be resumed — its agents are gone
+/// and its loop is not running — so what history offers is the ability to pick up where you left
+/// off by starting the same objective again, with the previous attempt's outcome visible.
+pub async fn recent(
+    store: &Store,
+    project_id: &str,
+    limit: i64,
+) -> Result<Vec<PastRun>, StoreError> {
+    let rows: Vec<(String, String, String, String, i64, f64)> = sqlx::query_as(
+        "SELECT id, objective, status, autonomy, iteration, spent_usd
+         FROM supervisor_runs WHERE project_id = ?1 ORDER BY started_at DESC LIMIT ?2",
+    )
+    .bind(project_id)
+    .bind(limit)
+    .fetch_all(store.reader())
+    .await?;
+
+    let mut out = Vec::new();
+    for (run_id, objective, status, autonomy, iteration, spent_usd) in rows {
+        let (task_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE supervisor_run_id = ?1")
+                .bind(&run_id)
+                .fetch_one(store.reader())
+                .await?;
+        let (decision_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM decisions WHERE supervisor_run_id = ?1")
+                .bind(&run_id)
+                .fetch_one(store.reader())
+                .await?;
+        out.push(PastRun {
+            run_id,
+            objective,
+            status,
+            autonomy,
+            iteration: iteration as u32,
+            spent_usd,
+            task_count,
+            decision_count,
+        });
+    }
+    Ok(out)
+}
+
 /// The most recent run for a project.
 pub async fn last_run(store: &Store, project_id: &str) -> Result<Option<PastRun>, StoreError> {
     let row: Option<(String, String, String, String, i64, f64)> = sqlx::query_as(

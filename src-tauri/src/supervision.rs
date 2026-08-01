@@ -326,6 +326,17 @@ pub type SharedApprovals = Arc<parking_lot::Mutex<Vec<TaskId>>>;
 
 pub struct GrantedApprovals(pub SharedApprovals);
 
+/// Standing instructions the operator has sent, waiting for the driver.
+pub type SharedGuidance = Arc<parking_lot::Mutex<Vec<deck_supervisor::guidance::Guidance>>>;
+
+pub struct GivenGuidance(pub SharedGuidance);
+
+impl deck_supervisor::guidance::GuidanceQueue for GivenGuidance {
+    fn drain(&self) -> Vec<deck_supervisor::guidance::Guidance> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
 pub struct GivenAnswers(pub SharedAnswers);
 
 impl deck_supervisor::escalation::AnswerQueue for GivenAnswers {

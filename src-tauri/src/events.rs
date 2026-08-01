@@ -353,6 +353,8 @@ pub async fn start_supervisor_run(
         .with_policy(permissions.level, &permissions.extra_bash)
         .with_model(models.worker.clone()),
     );
+    // Before any agent starts, so landing can tell whether the branch moved during the run.
+    workspaces.record_base_sha().await;
     let planner = crate::supervision::CliPlanner::new(repo).with_model(models.supervisor.clone());
 
     // Agent activity wakes the loop. Without this the run would only advance on the tick, which
@@ -1197,6 +1199,30 @@ pub struct TaskDiff {
 }
 
 #[tauri::command]
+pub async fn get_task_patch(state: State<'_, AppState>, task_id: String) -> Result<String, String> {
+    let Some(repo) = state.project.read().clone() else {
+        return Ok(String::new());
+    };
+    let id = task_id
+        .parse::<uuid::Uuid>()
+        .map(deck_core::domain::ids::TaskId::from)
+        .map_err(|_| "not a task id".to_string())?;
+
+    let registry = state.workspaces.read().clone();
+    let Some(workspace) = registry.get(id) else {
+        return Ok(String::new());
+    };
+
+    registry
+        .worktrees()
+        // 400k is comfortably more than anyone reads and still small enough to hand the webview
+        // in one message.
+        .patch(&repo, &workspace.worktree, 400_000)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_task_diffs(state: State<'_, AppState>) -> Result<Vec<TaskDiff>, String> {
     let Some(repo) = state.project.read().clone() else {
         return Ok(Vec::new());
@@ -1917,5 +1943,137 @@ mod tests {
         // the operator could not predict from what they typed.
         assert_eq!(slug_for_directory("!!!"), "");
         assert_eq!(slug_for_directory(""), "");
+    }
+}
+
+// --- project file browser ----------------------------------------------------------------------
+
+/// One entry in the project tree.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileEntry {
+    /// Relative to the project root, so the frontend never handles absolute paths.
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+/// Lists one directory inside the project.
+///
+/// Exists because a run's output was otherwise invisible: work happens on branches in worktrees,
+/// and until it lands the project folder looks untouched. Seeing the files is how an operator
+/// answers "did anything actually get built".
+#[tauri::command]
+pub async fn list_project_files(
+    state: State<'_, AppState>,
+    rel: Option<String>,
+) -> Result<Vec<FileEntry>, String> {
+    let Some(root) = state.project.read().clone() else {
+        return Ok(Vec::new());
+    };
+
+    let target = resolve_within(&root, rel.as_deref())?;
+    let mut entries = Vec::new();
+    let Ok(dir) = std::fs::read_dir(&target) else {
+        return Ok(entries);
+    };
+
+    for entry in dir.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // `.git` is noise and `.agentdeck` holds the worktrees, which are branches of this same
+        // tree — browsing into them would show the operator their own files back at several
+        // different commits and read as duplication.
+        if name == ".git" || name == ".agentdeck" {
+            continue;
+        }
+        let meta = entry.metadata().ok();
+        let is_dir = meta.as_ref().is_some_and(|m| m.is_dir());
+        let rel_path = match &rel {
+            Some(base) if !base.is_empty() => format!("{base}/{name}"),
+            _ => name.clone(),
+        };
+        entries.push(FileEntry {
+            path: rel_path,
+            name,
+            is_dir,
+            size: meta.map(|m| m.len()).unwrap_or(0),
+        });
+    }
+
+    // Directories first, then alphabetical — the order a file tree is read in.
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+    Ok(entries)
+}
+
+/// Reads one file from the project for preview.
+#[tauri::command]
+pub async fn read_project_file(state: State<'_, AppState>, rel: String) -> Result<String, String> {
+    let Some(root) = state.project.read().clone() else {
+        return Err("No project is open.".into());
+    };
+    let path = resolve_within(&root, Some(&rel))?;
+
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    if meta.len() > 512_000 {
+        return Err("That file is too large to preview here.".into());
+    }
+
+    // Binary is reported rather than rendered: dumping bytes into the webview produces a wall of
+    // replacement characters that looks like corruption.
+    match std::fs::read(&path) {
+        Ok(bytes) => String::from_utf8(bytes).map_err(|_| "Not a text file.".to_string()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Resolves a relative path and proves it stays inside the project.
+///
+/// The path arrives from the frontend, so `..` has to be treated as hostile rather than unlikely:
+/// without this, `../../.ssh/id_rsa` would be read and displayed. Canonicalized on both sides
+/// because a symlink inside the project can point anywhere, and comparing the strings we were
+/// given would miss that entirely.
+fn resolve_within(root: &std::path::Path, rel: Option<&str>) -> Result<std::path::PathBuf, String> {
+    let root = root
+        .canonicalize()
+        .map_err(|e| format!("could not read the project: {e}"))?;
+
+    let Some(rel) = rel.filter(|r| !r.is_empty()) else {
+        return Ok(root);
+    };
+
+    let candidate = root.join(rel);
+    let resolved = candidate
+        .canonicalize()
+        .map_err(|_| "no such file".to_string())?;
+
+    if !resolved.starts_with(&root) {
+        return Err("that path is outside the project".into());
+    }
+    Ok(resolved)
+}
+
+#[cfg(test)]
+mod browser_tests {
+    use super::resolve_within;
+
+    #[test]
+    fn a_path_cannot_escape_the_project() {
+        // The frontend supplies this string, so traversal is hostile input rather than a mistake.
+        // Without the check, `../../.ssh/id_rsa` would be read and rendered.
+        let root = std::env::temp_dir().join(format!("deck-browse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+
+        assert!(resolve_within(&root, Some("src/main.rs")).is_ok());
+        assert!(resolve_within(&root, Some("../../../etc/passwd")).is_err());
+        assert!(resolve_within(&root, Some("/etc/passwd")).is_err());
+        assert_eq!(
+            resolve_within(&root, None).unwrap(),
+            root.canonicalize().unwrap(),
+            "no path means the project root"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

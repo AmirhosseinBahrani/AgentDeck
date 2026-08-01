@@ -149,7 +149,10 @@ export function AdvancedView({ project }: { project: string | null }) {
 
 const MODELS: { id: string; label: string; note: string }[] = [
   { id: "", label: "CLI default", note: "Whatever your installed Claude Code picks" },
-  { id: "claude-opus-4-7", label: "Opus 4.7", note: "Most capable, slowest, dearest" },
+  { id: "claude-opus-5", label: "Opus 5", note: "Newest" },
+  { id: "claude-opus-4-8", label: "Opus 4.8", note: "" },
+  { id: "claude-opus-4-7", label: "Opus 4.7", note: "" },
+  { id: "claude-fable-5", label: "Fable 5", note: "" },
   { id: "claude-sonnet-4-6", label: "Sonnet 4.6", note: "The usual balance" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", note: "Fastest and cheapest" },
 ];
@@ -224,6 +227,8 @@ function ModelPicker({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const known = MODELS.some((m) => m.id === value);
+
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
@@ -259,6 +264,16 @@ function ModelPicker({
             <span className="min-w-0 truncate text-[10.5px] text-deck-faint">{model.note}</span>
           </button>
         ))}
+
+        {/* Model ids change faster than this app ships, and an unrecognised one is rejected by
+            the CLI at spawn rather than silently ignored — so a free field is safer than a list
+            that quietly goes stale. */}
+        <Input
+          value={known ? "" : value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Or type a model id"
+          className="mt-1"
+        />
       </div>
     </div>
   );

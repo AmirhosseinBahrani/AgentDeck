@@ -255,3 +255,117 @@ async fn a_second_attempt_starts_from_the_base_rather_than_the_last_one() {
         other => panic!("expected a clean re-integration, got {other:?}"),
     }
 }
+
+// --- landing on the operator's own branch ------------------------------------------------------
+
+fn head_of(dir: &Path, git_ref: &str) -> String {
+    let out = std::process::Command::new("git")
+        .args(["rev-parse", git_ref])
+        .current_dir(dir)
+        .output()
+        .expect("rev-parse");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[tokio::test]
+async fn a_green_integration_lands_on_the_checked_out_branch() {
+    // The bug this exists for: a finished run left the project directory exactly as it started.
+    // Every deliverable was real, but only on task branches and inside a scratch worktree, so the
+    // only reasonable reading was that the agents had produced nothing.
+    let repo = scratch_repo("land");
+    let a = branch_with(&repo, "agent-a", "one.txt", "one\n");
+    let b = branch_with(&repo, "agent-b", "two.txt", "two\n");
+    let before = head_of(&repo, "main");
+
+    let manager = WorktreeManager::new();
+    let outcome = manager
+        .integrate(
+            &repo,
+            "main",
+            &[a, b],
+            Some("true"),
+            Duration::from_secs(30),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(outcome, IntegrationOutcome::Integrated { .. }));
+
+    let landed = manager.land(&repo, "main", &before).await.unwrap();
+    assert!(
+        matches!(landed, deck_core::git::LandOutcome::Landed { .. }),
+        "got {landed:?}"
+    );
+
+    // The files, not just the ref: the operator's question is whether their app is there.
+    assert!(
+        repo.join("one.txt").exists(),
+        "the work is in the working tree"
+    );
+    assert!(repo.join("two.txt").exists());
+    assert_ne!(
+        head_of(&repo, "main"),
+        before,
+        "main moved to the integration"
+    );
+}
+
+#[tokio::test]
+async fn landing_refuses_rather_than_overwriting_uncommitted_work() {
+    // A checkout would silently destroy whatever the operator was in the middle of. Refusing
+    // costs them a manual merge; forcing costs them their work.
+    let repo = scratch_repo("land-dirty");
+    let a = branch_with(&repo, "agent-a", "one.txt", "one\n");
+    let before = head_of(&repo, "main");
+
+    let manager = WorktreeManager::new();
+    manager
+        .integrate(&repo, "main", &[a], Some("true"), Duration::from_secs(30))
+        .await
+        .unwrap();
+
+    std::fs::write(repo.join("shared.txt"), "the operator was editing this\n").unwrap();
+
+    let landed = manager.land(&repo, "main", &before).await.unwrap();
+    match landed {
+        deck_core::git::LandOutcome::Refused { reason } => {
+            assert!(reason.contains("uncommitted"), "unhelpful reason: {reason}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(repo.join("shared.txt")).unwrap(),
+        "the operator was editing this\n",
+        "their edit survives untouched"
+    );
+}
+
+#[tokio::test]
+async fn landing_refuses_when_the_branch_moved_underneath_the_run() {
+    // The integration was never tested against whatever arrived in the meantime, so
+    // fast-forwarding past it would be asserting something nothing checked.
+    let repo = scratch_repo("land-moved");
+    let a = branch_with(&repo, "agent-a", "one.txt", "one\n");
+    let before = head_of(&repo, "main");
+
+    let manager = WorktreeManager::new();
+    manager
+        .integrate(&repo, "main", &[a], Some("true"), Duration::from_secs(30))
+        .await
+        .unwrap();
+
+    std::fs::write(
+        repo.join("human.txt"),
+        "committed while the run was going\n",
+    )
+    .unwrap();
+    sh(&repo, &["add", "."]);
+    sh(&repo, &["commit", "-q", "-m", "human work"]);
+
+    let landed = manager.land(&repo, "main", &before).await.unwrap();
+    match landed {
+        deck_core::git::LandOutcome::Refused { reason } => {
+            assert!(reason.contains("moved"), "unhelpful reason: {reason}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}

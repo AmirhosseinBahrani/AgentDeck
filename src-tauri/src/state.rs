@@ -68,6 +68,8 @@ pub struct AppState {
     pub boot: BootId,
     /// The workspace and project rows every durable record hangs off.
     pub identity: LocalIdentity,
+    /// The repository this instance works on, or `None` when it was not started inside one.
+    pub project: Option<std::path::PathBuf>,
     /// What the boot-time reconcile found, so the UI can say so instead of it happening
     /// silently. An operator whose agents were killed deserves to know.
     pub startup_recovery: RecoveryReport,
@@ -136,14 +138,29 @@ impl AppState {
         let demo_broker = Arc::new(PermissionBroker::new(policy));
         mock.set_broker(demo_broker.clone());
 
-        // Rooted at the process's working directory: real agent worktrees are created under
-        // whichever project the operator opens, which arrives with the project model in M4.
-        let repo = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        // The project is the repository the app was started in. An app opened from Finder gets
+        // a working directory of `/`, which is not a repository and never a sensible place to
+        // create worktrees — so it resolves to None rather than being used, and a run refuses to
+        // start with a reason instead of pointing agents at the filesystem root.
+        //
+        // Deliberately no fallback to a previously-registered project: that would silently run
+        // agents against whatever repository was opened last, which is worse than not starting.
+        let project = resolve_project();
+        let repo = project
+            .clone()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
         let workspaces = Arc::new(WorkspaceRegistry::new(repo.clone()));
 
-        let identity = identity::ensure_project(&store, &repo)
-            .await
-            .map_err(|e| format!("could not register this project: {e}"))?;
+        // Only registered when it is real. Recording "/" as a project would put a row in the
+        // database that no run could ever use.
+        let identity = match &project {
+            Some(root) => identity::ensure_project(&store, root)
+                .await
+                .map_err(|e| format!("could not register this project: {e}"))?,
+            None => identity::ensure_project(&store, &std::path::PathBuf::from("/nonexistent"))
+                .await
+                .map_err(|e| format!("could not prepare the database: {e}"))?,
+        };
 
         let boot = BootId::new();
         let startup_recovery = Self::reconcile(&store, &boot).await;
@@ -163,6 +180,7 @@ impl AppState {
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,
             identity,
+            project,
             startup_recovery,
         })
     }
@@ -260,4 +278,17 @@ impl AppState {
 
 fn dirs_next_home() -> Option<std::path::PathBuf> {
     std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+/// Finds the git repository the app was started in.
+///
+/// Walks upward so launching from a subdirectory still works. Returns `None` rather than
+/// guessing: a `.app` opened from Finder inherits a working directory of `/`, and treating that
+/// as the project would create worktrees at the filesystem root and run the planner there.
+fn resolve_project() -> Option<std::path::PathBuf> {
+    let start = std::env::current_dir().ok()?.canonicalize().ok()?;
+    start
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .map(|dir| dir.to_path_buf())
 }

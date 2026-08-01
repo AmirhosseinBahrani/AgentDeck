@@ -78,7 +78,7 @@ export function TranscriptView({ sessionId }: { sessionId: string | null }) {
       {!pinned && (
         <button
           onClick={() => setPinned(true)}
-          className="absolute right-4 bottom-4 rounded bg-white/8 px-3 py-1.5 text-xs text-deck-text shadow hover:bg-white/14"
+          className="absolute right-4 bottom-4 rounded-md border border-white/[0.1] bg-deck-raised px-3 py-1.5 text-xs text-deck-text shadow-lg transition-colors hover:bg-white/[0.14]"
         >
           Jump to latest
         </button>
@@ -110,7 +110,7 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
 
     case "tool_call":
       return (
-        <div className="my-1 rounded border border-white/8 bg-white/4/60 px-2.5 py-1.5">
+        <div className="my-1 rounded-md border border-white/[0.07] bg-white/[0.04] px-2.5 py-1.5">
           <div className="mb-0.5 font-mono text-[11px] tracking-wide text-deck-live">{row.tool}</div>
           <pre className="overflow-x-auto font-mono text-[11px] text-deck-dim">
             {truncate(JSON.stringify(row.input, null, 2), 600)}
@@ -124,7 +124,7 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
           className={`my-1 rounded border px-2.5 py-1.5 ${
             row.isError
               ? "border-deck-danger/35 bg-deck-danger/10"
-              : "border-white/8 bg-white/4/30"
+              : "border-white/[0.06] bg-white/[0.025]"
           }`}
         >
           <pre

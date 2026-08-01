@@ -106,6 +106,8 @@ impl TaskContract {
 pub enum ContractRepair {
     /// A default test command was added because the planner supplied no executable criterion.
     InjectedDefaultVerification { cmd: String },
+    /// The contract had no executable criterion and the project offered no command to inject.
+    NoVerificationAvailable,
     /// A criterion had an empty id and was given a generated one.
     GeneratedCriterionId { id: String },
 }
@@ -118,7 +120,7 @@ pub enum ContractRepair {
 /// gap, not a reason to burn another round-trip.
 pub fn validate_and_repair(
     contract: &mut TaskContract,
-    default_test_command: &str,
+    default_test_command: Option<&str>,
 ) -> Vec<ContractRepair> {
     let mut repairs = Vec::new();
 
@@ -131,6 +133,14 @@ pub fn validate_and_repair(
     }
 
     if !contract.has_executable_criterion() {
+        // Recorded rather than papered over. Leaving the contract on judgment criteria alone is
+        // the weaker outcome this function exists to avoid, so when it is unavoidable it belongs
+        // in the decision log where an operator can see why nothing was executable.
+        let Some(default_test_command) = default_test_command else {
+            repairs.push(ContractRepair::NoVerificationAvailable);
+            return repairs;
+        };
+
         contract.acceptance_criteria.push(Criterion {
             id: "injected-default-verification".into(),
             text: format!("The project's tests pass (`{default_test_command}`)"),

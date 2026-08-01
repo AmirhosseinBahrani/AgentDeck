@@ -47,6 +47,7 @@ pub fn run() {
             events::get_run_snapshot,
             events::get_startup_recovery,
             events::get_resumable_sessions,
+            events::list_session_history,
             events::resume_session,
             events::approve_dispatch,
             events::force_kill_agent,

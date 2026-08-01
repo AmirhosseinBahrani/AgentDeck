@@ -259,6 +259,19 @@ pub async fn start_supervisor_run(
         roster
     };
 
+    // Read from the repository rather than assumed. This was hardcoded to `cargo test`, so every
+    // project was verified as though it were this one — an empty repo failed the integration gate
+    // with cargo's own "could not find Cargo.toml", reported as the agents' tests failing.
+    let test_command = deck_core::project::detect_test_command(&repo);
+    if let deck_core::project::TestCommand::Detected { cmd, from } = &test_command {
+        tracing::info!(cmd, from, "detected project test command");
+    } else {
+        tracing::warn!(
+            repo = %repo.display(),
+            "no test command detected; integration will merge but not verify"
+        );
+    }
+
     let team: Vec<TeamMember> = roster
         .iter()
         .map(|a| TeamMember {
@@ -270,7 +283,7 @@ pub async fn start_supervisor_run(
     let config = RunConfig {
         objective,
         team,
-        default_test_command: "cargo test".into(),
+        default_test_command: test_command.cmd().map(str::to_string),
         verification_root: repo.clone(),
         limits: RunLimits {
             max_cost_usd: max_cost_usd.unwrap_or(5.0),
@@ -981,6 +994,39 @@ pub struct ResumableSummary {
     /// False once the worktree is gone, which makes the conversation permanently unreachable.
     /// Shown up front rather than discovered when a resume fails.
     pub resumable: bool,
+}
+
+/// A session that has already run, as the history list renders it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SessionHistoryEntry {
+    pub session_id: String,
+    pub agent_name: String,
+    pub task_title: Option<String>,
+    pub status: String,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub cost_usd: f64,
+}
+
+/// Past sessions for the open project, so their transcripts stay readable after the run ends.
+#[tauri::command]
+pub async fn list_session_history(
+    state: State<'_, AppState>,
+) -> Result<Vec<SessionHistoryEntry>, String> {
+    Ok(state
+        .session_history()
+        .await
+        .into_iter()
+        .map(|s| SessionHistoryEntry {
+            session_id: s.session_id.to_string(),
+            agent_name: s.agent_name,
+            task_title: s.task_title,
+            status: s.status,
+            started_at: s.started_at,
+            ended_at: s.ended_at,
+            cost_usd: s.cost_usd,
+        })
+        .collect())
 }
 
 #[tauri::command]

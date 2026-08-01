@@ -29,7 +29,7 @@ fn config(root: PathBuf) -> RunConfig {
             agent_id: AgentId::new(),
             role: "developer".into(),
         }],
-        default_test_command: "true".into(),
+        default_test_command: Some("true".into()),
         verification_root: root,
         limits: RunLimits::default(),
         plan_limits: PlanLimits::default(),

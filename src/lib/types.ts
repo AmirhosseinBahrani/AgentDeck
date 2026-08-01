@@ -195,6 +195,17 @@ export interface AgentSummary {
   review_rounds: number;
 }
 
+/** A session that has already run, listed so its transcript stays readable after the run ends. */
+export interface SessionHistoryEntry {
+  session_id: string;
+  agent_name: string;
+  task_title: string | null;
+  status: string;
+  started_at: number | null;
+  ended_at: number | null;
+  cost_usd: number;
+}
+
 export interface GraphEdge {
   from: string;
   to: string;

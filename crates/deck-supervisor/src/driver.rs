@@ -32,7 +32,9 @@ pub struct RunConfig {
     pub objective: String,
     pub team: Vec<TeamMember>,
     /// Injected into any contract that arrives without executable verification.
-    pub default_test_command: String,
+    /// `None` when the project's toolchain was not recognised. Never a fabricated stand-in: a
+    /// made-up command fails as a red test, which the gate must treat as broken work.
+    pub default_test_command: Option<String>,
     /// Fallback verification directory, used only for a task with no worktree — which should not
     /// happen once dispatch has run, and is treated as inconclusive rather than failed.
     pub verification_root: PathBuf,
@@ -473,7 +475,7 @@ impl<'a> Driver<'a> {
             .workspaces
             .integrate(
                 &contributions,
-                &self.config.default_test_command,
+                self.config.default_test_command.as_deref(),
                 self.config.verification_timeout,
             )
             .await;
@@ -488,6 +490,23 @@ impl<'a> Driver<'a> {
                     "merged_and_green",
                     &format!(
                         "{} branches merged and the project tests passed",
+                        merged.len()
+                    ),
+                );
+            }
+
+            // Lets the run finish, because refusing would strand every project whose toolchain
+            // we cannot identify with no way to ever complete. The claim it records is the weaker
+            // one it is entitled to: the branches merge, and nothing checked that they work.
+            IntegrationOutcome::MergedUnverified { merged, reason } => {
+                run.state.integrated = true;
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "integration",
+                    "merged_unverified",
+                    &format!(
+                        "{} branches merged but not verified — {reason}",
                         merged.len()
                     ),
                 );
@@ -747,7 +766,7 @@ impl<'a> Driver<'a> {
 
             let mut contract = proposed.contract.clone();
             let contract_repairs =
-                validate_and_repair(&mut contract, &self.config.default_test_command);
+                validate_and_repair(&mut contract, self.config.default_test_command.as_deref());
             for repair in &contract_repairs {
                 run.log.record_code_decision(
                     run.state.iteration,

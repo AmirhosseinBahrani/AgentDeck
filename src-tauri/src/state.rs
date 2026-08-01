@@ -270,6 +270,14 @@ impl AppState {
     }
 
     /// Sessions a crash left behind, each with the directory `--resume` must run from.
+    /// Every past session for the open project, newest first.
+    pub async fn session_history(&self) -> Vec<sessions::PastSession> {
+        let project_id = self.identity.read().project_id.clone();
+        sessions::history(&self.store, &project_id, 100)
+            .await
+            .unwrap_or_default()
+    }
+
     pub async fn resumable_sessions(&self) -> Vec<sessions::ResumableSession> {
         sessions::resumable(&self.store, 50)
             .await

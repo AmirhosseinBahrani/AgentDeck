@@ -251,7 +251,7 @@ impl Workspaces for LiveWorkspaces {
     async fn integrate(
         &self,
         contributions: &[deck_core::git::Contribution],
-        test_command: &str,
+        test_command: Option<&str>,
         timeout: std::time::Duration,
     ) -> deck_core::git::IntegrationOutcome {
         self.registry

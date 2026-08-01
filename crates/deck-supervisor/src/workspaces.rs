@@ -69,7 +69,7 @@ pub trait Workspaces: Send + Sync {
     async fn integrate(
         &self,
         contributions: &[Contribution],
-        test_command: &str,
+        test_command: Option<&str>,
         timeout: std::time::Duration,
     ) -> IntegrationOutcome;
 }
@@ -217,7 +217,7 @@ impl Workspaces for FakeWorkspaces {
     async fn integrate(
         &self,
         contributions: &[Contribution],
-        _test_command: &str,
+        _test_command: Option<&str>,
         _timeout: std::time::Duration,
     ) -> IntegrationOutcome {
         // Defaults to success, so tests that are not about integration are unaffected by its

@@ -35,7 +35,7 @@ fn config(root: PathBuf, default_test: &str) -> RunConfig {
                 role: "reviewer".into(),
             },
         ],
-        default_test_command: default_test.into(),
+        default_test_command: Some(default_test.into()),
         verification_root: root,
         limits: RunLimits::default(),
         plan_limits: PlanLimits::default(),

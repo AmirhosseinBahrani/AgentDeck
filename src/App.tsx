@@ -150,7 +150,10 @@ function Deck() {
         <WorkspaceView
           sessions={sessions}
           active={active}
-          onSelect={setActive}
+          // `openSession` rather than `setActive`: the sidebar can name a session that has no tab
+          // yet — an agent from the roster, or one from an earlier run — and selecting it without
+          // registering it left the transcript showing with nothing in the tab strip to close.
+          onSelect={openSession}
           onClose={(id) => {
             setSessions((prev) => prev.filter((s) => s !== id));
             // Focus falls to whatever is left rather than to nothing: closing a tab and landing

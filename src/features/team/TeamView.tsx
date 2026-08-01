@@ -321,17 +321,23 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
             runActive={running}
           />
 
-          <section className="flex flex-col gap-1.5">
+          <section className="flex min-h-0 flex-col gap-1.5">
             <SectionRule
               label="Team"
               trailing={`max ${snapshot?.max_concurrent ?? 0} concurrent`}
               className="pb-2"
             />
-            <AgentRoster
-              agents={snapshot?.agents ?? []}
-              onOpenSession={(id) => onOpenSession(id)}
-              onRevoke={setRevoking}
-            />
+            {/* Scrolls within its own height rather than growing the column. A roster of eight
+                pushed the task graph off the bottom of the page — and the graph is the thing you
+                look at to see whether the run is progressing, so the roster growing must not be
+                what hides it. */}
+            <div className="flex max-h-[38vh] min-h-0 flex-col overflow-y-auto pr-1">
+              <AgentRoster
+                agents={snapshot?.agents ?? []}
+                onOpenSession={(id) => onOpenSession(id)}
+                onRevoke={setRevoking}
+              />
+            </div>
             <Button
               variant="ghost"
               size="sm"
@@ -342,7 +348,7 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
             </Button>
           </section>
 
-          <section className="flex min-h-0 flex-col gap-3">
+          <section className="flex min-h-[180px] shrink-0 flex-col gap-3">
             <SectionRule
               label="Task graph"
               trailing={`${tasks.length} task${tasks.length === 1 ? "" : "s"}`}

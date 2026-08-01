@@ -379,3 +379,134 @@ pub fn worker_defaults() -> PolicyLayer {
         ],
     }
 }
+
+/// How much an agent may do without being asked.
+///
+/// Three points on one axis, because the operator's real question is "how much do I trust this
+/// team on this codebase" rather than "which of forty tool names should be allowed". The axis
+/// moves what is auto-approved; it never moves the worktree boundary or the deny list, both of
+/// which hold at every level — see [`level_layer`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionLevel {
+    /// Reads and searches freely; every write and every shell command is asked about.
+    Cautious,
+    /// Edits inside its own worktree without asking. Shell is a curated allowlist.
+    #[default]
+    Standard,
+    /// As Standard, plus shell commands are allowed unless the deny list catches them.
+    Trusted,
+}
+
+impl PermissionLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PermissionLevel::Cautious => "cautious",
+            PermissionLevel::Standard => "standard",
+            PermissionLevel::Trusted => "trusted",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Self {
+        match raw {
+            "cautious" => PermissionLevel::Cautious,
+            "trusted" => PermissionLevel::Trusted,
+            _ => PermissionLevel::Standard,
+        }
+    }
+
+    /// Whether the CLI may apply edits without a prompt.
+    ///
+    /// Cautious is the only level that says no, which is what makes it a review posture rather
+    /// than a slower version of the same thing.
+    pub fn accepts_edits(self) -> bool {
+        !matches!(self, PermissionLevel::Cautious)
+    }
+}
+
+/// Builds the policy for a level, plus whatever shell prefixes the operator added.
+///
+/// The deny list is identical at every level and is not configurable from the UI. Deny is
+/// monotonic by design — it is unioned across layers and no lower layer can override it — so
+/// offering a control that appeared to relax it would be a safety claim the resolver does not
+/// honour. `rm -rf`, `sudo`, `git push` and network fetches stay refused even at Trusted; the
+/// worktree boundary is enforced by the CLI itself and is not on this axis at all.
+pub fn level_layer(level: PermissionLevel, extra_bash: &[String]) -> PolicyLayer {
+    let mut layer = worker_defaults();
+    layer.name = format!("worker-{}", level.as_str());
+
+    match level {
+        PermissionLevel::Cautious => {
+            // Writing is still possible, it just becomes a question. Removing the tools outright
+            // would make the agent unable to do the work rather than unable to do it unattended.
+            layer.allow_tools.retain(|t| t != "Write" && t != "Edit");
+            layer.allow_bash_prefixes.clear();
+        }
+        PermissionLevel::Standard => {}
+        PermissionLevel::Trusted => {
+            // An empty prefix matches every command, so the deny list becomes the only gate.
+            layer.allow_bash_prefixes.push(String::new());
+        }
+    }
+
+    layer
+        .allow_bash_prefixes
+        .extend(extra_bash.iter().filter(|p| !p.trim().is_empty()).cloned());
+    layer
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::*;
+
+    #[test]
+    fn the_deny_list_survives_every_level() {
+        // The one invariant the whole control rests on. Deny is unioned across layers and cannot
+        // be overridden downstream, so a level that appeared to relax it would be lying.
+        for level in [
+            PermissionLevel::Cautious,
+            PermissionLevel::Standard,
+            PermissionLevel::Trusted,
+        ] {
+            let layer = level_layer(level, &[]);
+            for forbidden in ["rm -rf", "sudo", "git push", "curl"] {
+                assert!(
+                    layer.deny_bash_patterns.iter().any(|p| p == forbidden),
+                    "{forbidden} must stay denied at {}",
+                    level.as_str()
+                );
+            }
+            assert!(layer.deny_tools.iter().any(|t| t == "WebFetch"));
+        }
+    }
+
+    #[test]
+    fn cautious_asks_before_writing_and_trusted_does_not_ask_before_shell() {
+        let cautious = level_layer(PermissionLevel::Cautious, &[]);
+        assert!(!cautious.allow_tools.iter().any(|t| t == "Write"));
+        assert!(cautious.allow_bash_prefixes.is_empty());
+        assert!(
+            cautious.allow_tools.iter().any(|t| t == "Read"),
+            "reading is never the risky part"
+        );
+
+        let trusted = level_layer(PermissionLevel::Trusted, &[]);
+        assert!(
+            trusted.allow_bash_prefixes.iter().any(|p| p.is_empty()),
+            "an empty prefix matches everything, leaving the deny list as the only gate"
+        );
+    }
+
+    #[test]
+    fn operator_prefixes_are_added_and_blanks_ignored() {
+        let layer = level_layer(PermissionLevel::Standard, &["make ".into(), "  ".into()]);
+        assert!(layer.allow_bash_prefixes.iter().any(|p| p == "make "));
+        assert!(
+            !layer
+                .allow_bash_prefixes
+                .iter()
+                .any(|p| p.trim().is_empty()),
+            "a blank row would silently allow every command"
+        );
+    }
+}

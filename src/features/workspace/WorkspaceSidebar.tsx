@@ -62,6 +62,7 @@ export function WorkspaceSidebar({
                   className={cn(
                     "size-1.5 rounded-full",
                     agent.status === "running" && "animate-live bg-deck-live",
+                    agent.status === "reviewing" && "bg-deck-live/60",
                     agent.status === "blocked" && "bg-deck-attention",
                     agent.status === "idle" && "border border-deck-faint/70",
                   )}
@@ -78,7 +79,8 @@ export function WorkspaceSidebar({
               <span
                 className={cn(
                   "shrink-0 font-mono text-[10.5px]",
-                  agent.status === "running" && "text-deck-live",
+                  (agent.status === "running" || agent.status === "reviewing") &&
+                    "text-deck-live",
                   agent.status === "blocked" && "text-deck-attention",
                   agent.status === "idle" && "text-deck-faint",
                 )}

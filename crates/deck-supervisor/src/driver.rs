@@ -348,6 +348,8 @@ impl<'a> Driver<'a> {
 
         let iteration = run.state.iteration;
         let mut dispatched = Vec::new();
+        // Taken before the pipeline so Commit can tell an iteration from a poll. See `progress`.
+        let before = progress_fingerprint(run);
 
         for stage in run.receipts.remaining(iteration) {
             // A stage that escalated or ended the run stops the pipeline. Continuing would let a
@@ -366,7 +368,17 @@ impl<'a> Driver<'a> {
                 Stage::Judge => self.stage_judge(run).await,
                 Stage::CompletionCheck => self.stage_completion_check(run).await,
                 Stage::Commit => {
-                    run.state.iteration += 1;
+                    // Counted only when the pass changed something.
+                    //
+                    // The cap exists to stop a loop that spins on the same state, but the sweep
+                    // asks for an iteration whenever any task is Running — which is the normal
+                    // condition for an agent doing its job. At a two-second tick, a run whose
+                    // agents worked for seven minutes burned all 200 and stopped with "iteration
+                    // cap reached", having looped over nothing. Progress is the thing worth
+                    // counting; time already has its own limit.
+                    if progress_fingerprint(run) != before {
+                        run.state.iteration += 1;
+                    }
                     run.state.spent_usd = run.log.cost();
                 }
                 _ => {}
@@ -1426,4 +1438,28 @@ pub fn claim_done(run: &mut Run, task_id: TaskId) -> bool {
         // A session that exits without a legal claim has failed, not finished.
         Err(_) => false,
     }
+}
+
+/// A cheap summary of everything an iteration could legitimately have changed.
+///
+/// Compared before and after the pipeline so Commit can tell a productive pass from a poll. The
+/// cap exists to stop a loop spinning on unchanged state, but the sweep asks for an iteration
+/// whenever any task is Running — the normal condition for an agent doing its job. At a
+/// two-second tick a run whose agents worked for seven minutes exhausted all 200 and stopped with
+/// "iteration cap reached", having looped over nothing.
+///
+/// The decision count is deliberately part of this: a stage that consulted a model and recorded
+/// the answer did real work even when the graph came out looking the same, and excluding it would
+/// let a genuine model-calling loop run unbounded — which is exactly what the cap is for.
+fn progress_fingerprint(run: &Run) -> (usize, usize, Vec<(TaskId, TaskStatus, u32, u32)>) {
+    let mut tasks: Vec<(TaskId, TaskStatus, u32, u32)> = run
+        .graph
+        .tasks()
+        .map(|t| (t.id, t.status, t.attempts, t.review_rounds))
+        .collect();
+    // The graph stores tasks in a HashMap, so an unsorted list would differ between passes for no
+    // reason and make every poll look like progress.
+    tasks.sort_by_key(|t| t.0);
+
+    (run.log.decisions.len(), run.escalations.len(), tasks)
 }

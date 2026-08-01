@@ -740,3 +740,33 @@ async fn tasks_spread_across_agents_that_share_a_role() {
     assert_eq!(per_agent.len(), 3, "one task each, not three on one agent");
     assert!(per_agent.values().all(|&n| n == 1));
 }
+
+#[tokio::test]
+async fn polling_a_working_agent_does_not_consume_iterations() {
+    // The sweep asks for an iteration whenever any task is Running, which is the normal condition
+    // for an agent doing its job. Counting each of those passes meant a two-second tick spent the
+    // whole 200-iteration budget in about seven minutes and stopped the run with "iteration cap
+    // reached" — a message about looping, produced by a run that had looped over nothing.
+    let root = workdir("iteration-poll");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+
+    // Plan and dispatch: real progress, and worth counting.
+    driver.step(&mut run, true).await;
+    let after_dispatch = run.state.iteration;
+    assert!(after_dispatch > 0, "planning and dispatching is progress");
+
+    // The agent is now working and reports nothing. Every pass from here changes nothing.
+    for _ in 0..10 {
+        driver.step(&mut run, false).await;
+    }
+
+    assert_eq!(
+        run.state.iteration, after_dispatch,
+        "ten polls of an unchanged run must not spend ten iterations"
+    );
+}

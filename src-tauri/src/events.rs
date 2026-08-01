@@ -1847,8 +1847,13 @@ fn snapshot_of(
                 .or_else(|| mine.iter().find(|t| t.status == TaskStatus::Blocked))
                 .copied();
 
+            // Review is its own state, not a kind of running. The agent's session is parked
+            // once it claims done — it is not executing anything — so reporting "running" made a
+            // finished agent look stuck at work, which is exactly how it reads on the roster when
+            // a verdict is slow to arrive.
             let status = match current.map(|t| t.status) {
-                Some(TaskStatus::Running) | Some(TaskStatus::Review) => "running",
+                Some(TaskStatus::Running) => "running",
+                Some(TaskStatus::Review) => "reviewing",
                 Some(TaskStatus::Blocked) => "blocked",
                 _ => "idle",
             };

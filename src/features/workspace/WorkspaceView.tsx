@@ -4,7 +4,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { SectionRule } from "../../components/ui/section-rule";
-import type { AgentSummary, EscalationAnswer, RunSnapshot } from "../../lib/types";
+import type {
+  AgentSummary,
+  EscalationAnswer,
+  RunSnapshot,
+  SessionHistoryEntry,
+  TaskSummary,
+} from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { EscalationInbox } from "../team/EscalationInbox";
 import { TranscriptView } from "../sessions/TranscriptView";
@@ -30,8 +36,10 @@ export function WorkspaceView({
   onClose: (sessionId: string) => void;
 }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
+  const [history, setHistory] = useState<SessionHistoryEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [answering, setAnswering] = useState<string | null>(null);
+  const [openTask, setOpenTask] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -39,6 +47,18 @@ export function WorkspaceView({
     } catch {
       // A failed poll is not worth surfacing; the next one will succeed.
     }
+  }, []);
+
+  // Polled far more slowly than the snapshot. History only changes when a session ends, and
+  // joining three tables every second to learn nothing has changed is not worth it.
+  useEffect(() => {
+    const load = () =>
+      void invoke<SessionHistoryEntry[]>("list_session_history")
+        .then(setHistory)
+        .catch(() => {});
+    load();
+    const id = setInterval(load, 15_000);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -87,14 +107,28 @@ export function WorkspaceView({
   const agentFor = (sessionId: string | null) =>
     snapshot?.agents.find((a) => a.session_id === sessionId) ?? null;
   const current = agentFor(active);
+  // Falls back to history so a transcript from an earlier run is labelled with who wrote it
+  // rather than the word "Session".
+  const nameFor = (id: string) =>
+    agentFor(id)?.name ?? history.find((h) => h.session_id === id)?.agent_name ?? "Session";
+  const pastEntry = active && !current ? history.find((h) => h.session_id === active) : undefined;
   const escalations = snapshot?.escalations ?? [];
+  // Resolved against the live snapshot rather than stored, so a selected task that disappears
+  // between polls closes the panel instead of rendering a stale copy of itself.
+  const selectedTask = snapshot?.tasks.find((t) => t.id === openTask) ?? null;
 
   return (
     <div className="flex min-h-0 grow">
       <WorkspaceSidebar
         snapshot={snapshot}
+        history={history}
         activeSession={active}
-        onOpenSession={onSelect}
+        activeTask={openTask}
+        onOpenSession={(id) => {
+          setOpenTask(null);
+          onSelect(id);
+        }}
+        onOpenTask={setOpenTask}
       />
 
       <main className="flex min-w-0 grow flex-col">
@@ -102,11 +136,23 @@ export function WorkspaceView({
           sessions={sessions}
           active={active}
           agentFor={agentFor}
+          nameFor={nameFor}
           onSelect={onSelect}
           onClose={onClose}
         />
 
         {current && <SessionHeader agent={current} onKill={kill} />}
+
+        {pastEntry && (
+          <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.07] px-4 py-1.5 text-[11px] text-deck-faint">
+            <span className="text-deck-dim">{pastEntry.agent_name}</span>
+            <span>·</span>
+            <span>{pastEntry.task_title ?? "no task"}</span>
+            <span className="ml-auto font-mono">
+              {pastEntry.status} · ${pastEntry.cost_usd.toFixed(2)}
+            </span>
+          </div>
+        )}
 
         {error && (
           <div className="shrink-0 border-b border-deck-attention/25 bg-deck-attention/[0.08] px-4 py-1.5 text-[11px] text-deck-attention">
@@ -120,6 +166,15 @@ export function WorkspaceView({
       </main>
 
       <aside className="glass-flat flex w-[300px] shrink-0 flex-col gap-5 overflow-y-auto border-l border-white/[0.07] p-4">
+        {selectedTask ? (
+          <TaskDetail
+            task={selectedTask}
+            agent={snapshot?.agents.find((a) => a.task_id === selectedTask.id) ?? null}
+            onClose={() => setOpenTask(null)}
+            onOpenSession={onSelect}
+          />
+        ) : (
+          <>
         <section className="flex flex-col gap-2">
           <SectionRule label="Objective" trailing={snapshot?.run_id ? `run ${snapshot.run_id}` : undefined} />
           {snapshot?.objective ? (
@@ -176,8 +231,87 @@ export function WorkspaceView({
             </div>
           )}
         </section>
+          </>
+        )}
       </aside>
     </div>
+  );
+}
+
+/**
+ * One task, in full.
+ *
+ * Takes over the right column rather than opening over the transcript: the two are meant to be
+ * read together — the contract on one side, what the agent actually did on the other — and a
+ * dialog would cover exactly the thing it is describing.
+ */
+function TaskDetail({
+  task,
+  agent,
+  onClose,
+  onOpenSession,
+}: {
+  task: TaskSummary;
+  agent: AgentSummary | null;
+  onClose: () => void;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  const facts: [string, string][] = [
+    ["Status", task.status],
+    ["Role", task.role],
+    ["Attempts", String(task.attempts)],
+    ["Review rounds", String(task.review_rounds)],
+    ["Objective gate", task.objective_gate ? "yes" : "no"],
+    ["Agent", agent?.name ?? "unassigned"],
+  ];
+  if (agent?.branch) facts.push(["Branch", agent.branch]);
+
+  return (
+    <>
+      <section className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-2">
+          <SectionRule label="Task" />
+          <Button variant="ghost" size="sm" onClick={onClose} className="-mt-1 -mr-1">
+            <X />
+          </Button>
+        </div>
+        <p className="text-[13px] leading-5 text-deck-text">{task.title}</p>
+        <span className="font-mono text-[10px] text-deck-faint">{task.id}</span>
+      </section>
+
+      {task.awaiting_approval && (
+        <p className="rounded-md border border-deck-attention/30 bg-deck-attention/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-deck-attention">
+          Assigned and ready, but this autonomy mode needs you to start it.
+        </p>
+      )}
+
+      {task.blocked_reason && (
+        <section className="flex flex-col gap-1.5">
+          <SectionRule label="Blocked" accent />
+          <p className="text-[11.5px] leading-relaxed text-deck-attention">
+            {task.blocked_reason}
+          </p>
+        </section>
+      )}
+
+      <section className="flex flex-col gap-1.5">
+        <SectionRule label="Detail" />
+        {facts.map(([label, value]) => (
+          <div key={label} className="flex items-baseline justify-between gap-3">
+            <span className="shrink-0 text-[11.5px] text-deck-faint">{label}</span>
+            <span className="min-w-0 truncate text-right font-mono text-[11px] text-deck-dim">
+              {value}
+            </span>
+          </div>
+        ))}
+      </section>
+
+      {task.session_id && (
+        <Button variant="secondary" size="sm" onClick={() => onOpenSession(task.session_id!)}>
+          Open this agent's transcript
+        </Button>
+      )}
+    </>
   );
 }
 
@@ -216,12 +350,14 @@ function SessionTabs({
   sessions,
   active,
   agentFor,
+  nameFor,
   onSelect,
   onClose,
 }: {
   sessions: string[];
   active: string | null;
   agentFor: (id: string) => AgentSummary | null;
+  nameFor: (id: string) => string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
 }) {
@@ -260,7 +396,7 @@ function SessionTabs({
                   isActive ? "font-semibold text-deck-text" : "text-deck-dim",
                 )}
               >
-                {agent?.name ?? "Session"}
+                {nameFor(id)}
               </span>
               <span className="font-mono text-[10px] text-deck-faint">#{id.slice(0, 4)}</span>
             </button>

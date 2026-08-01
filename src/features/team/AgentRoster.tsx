@@ -1,4 +1,4 @@
-import { Terminal, UserMinus } from "lucide-react";
+import { UserMinus } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import type { AgentSummary } from "../../lib/types";
@@ -51,11 +51,26 @@ function AgentRow({
 }) {
   const running = agent.status === "running";
   const blocked = agent.status === "blocked";
+  const open = agent.session_id ? () => onOpenSession(agent.session_id!) : undefined;
 
   return (
     <div
+      // The whole row opens the agent's transcript. Reading what an agent is doing is the reason
+      // to look at a roster at all, so it should not be a small target at the end of the row.
+      role={open ? "button" : undefined}
+      tabIndex={open ? 0 : undefined}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (open && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          open();
+        }
+      }}
       className={cn(
         "animate-rise flex items-center gap-4 rounded-[9px] border px-4 py-[11px] transition-colors",
+        open
+          ? "cursor-pointer hover:brightness-125 focus-visible:ring-1 focus-visible:ring-deck-live/50 focus-visible:outline-none"
+          : "cursor-default",
         blocked
           ? "border-deck-attention/30 bg-deck-attention/[0.06]"
           : running
@@ -119,27 +134,19 @@ function AgentRow({
         </span>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" onClick={() => onRevoke(agent.id)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRevoke(agent.id);
+              }}
+            >
               <UserMinus />
             </Button>
           </TooltipTrigger>
           <TooltipContent>Take this agent off the roster.</TooltipContent>
         </Tooltip>
-        {agent.session_id && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => onOpenSession(agent.session_id!)}
-                className="-mr-1"
-              >
-                <Terminal />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Read what this agent is doing.</TooltipContent>
-          </Tooltip>
-        )}
       </div>
     </div>
   );

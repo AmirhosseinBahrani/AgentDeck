@@ -1,4 +1,4 @@
-import type { RunSnapshot } from "../../lib/types";
+import type { RunSnapshot, SessionHistoryEntry } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
 /**
@@ -10,33 +10,26 @@ import { cn } from "../../lib/utils";
  */
 export function WorkspaceSidebar({
   snapshot,
+  history,
   activeSession,
+  activeTask,
   onOpenSession,
+  onOpenTask,
 }: {
   snapshot: RunSnapshot | null;
+  history: SessionHistoryEntry[];
   activeSession: string | null;
+  activeTask: string | null;
   onOpenSession: (sessionId: string) => void;
+  onOpenTask: (taskId: string) => void;
 }) {
   const tasks = snapshot?.tasks ?? [];
-  const counts = [
-    { label: "Running", n: tasks.filter((t) => t.status === "running").length, tone: "live" },
-    { label: "In review", n: tasks.filter((t) => t.status === "review").length, tone: "live" },
-    {
-      label: "Blocked",
-      n: tasks.filter((t) => t.status === "blocked").length,
-      tone: "attention",
-    },
-    {
-      label: "Queued",
-      n: tasks.filter((t) => ["queued", "assigned", "backlog"].includes(t.status)).length,
-      tone: "dim",
-    },
-    {
-      label: "Completed",
-      n: tasks.filter((t) => t.status === "completed").length,
-      tone: "faint",
-    },
-  ] as const;
+  // Sessions belonging to the live run are already listed under Team with their current status.
+  // Repeating them here would make the history read as though the run had happened twice.
+  const liveSessions = new Set(
+    (snapshot?.agents ?? []).map((a) => a.session_id).filter(Boolean) as string[],
+  );
+  const past = history.filter((h) => !liveSessions.has(h.session_id));
 
   return (
     <aside className="glass-flat flex w-[236px] shrink-0 flex-col gap-[22px] overflow-y-auto border-r border-white/[0.07] px-3 py-[18px]">
@@ -103,45 +96,95 @@ export function WorkspaceSidebar({
       </Group>
 
       <Group label="Tasks" trailing={String(tasks.length)}>
-        {counts.map((c) => (
-          <div key={c.label} className="flex h-7 items-center gap-2 rounded-md px-2">
-            <span className="flex w-2.5 shrink-0 justify-center">
+        {tasks.length === 0 && (
+          <p className="px-2 text-[11px] leading-relaxed text-deck-faint">
+            Tasks appear once the objective is decomposed.
+          </p>
+        )}
+        {tasks.map((task) => {
+          const selected = task.id === activeTask;
+          return (
+            <button
+              key={task.id}
+              onClick={() => onOpenTask(task.id)}
+              title={task.title}
+              className={cn(
+                "flex h-7 items-center gap-2 rounded-md px-2 text-left transition-colors",
+                selected ? "bg-white/[0.07]" : "hover:bg-white/[0.05]",
+              )}
+            >
+              <span className="flex w-2.5 shrink-0 justify-center">
+                <span className={cn("size-1.5 rounded-full", taskTone(task.status))} />
+              </span>
               <span
                 className={cn(
-                  "size-1.5 rounded-full",
-                  c.n === 0
-                    ? "border border-deck-faint/40"
-                    : c.tone === "live"
-                      ? "bg-deck-live"
-                      : c.tone === "attention"
-                        ? "bg-deck-attention"
-                        : c.tone === "faint"
-                          ? "bg-deck-done"
-                          : "bg-deck-dim",
+                  "min-w-0 grow truncate text-[12px]",
+                  task.status === "completed" ? "text-deck-faint" : "text-deck-dim",
                 )}
-              />
-            </span>
-            <span
-              className={cn(
-                "grow text-[12px]",
-                c.n === 0 ? "text-deck-faint" : "text-deck-dim",
-              )}
-            >
-              {c.label}
-            </span>
-            <span
-              className={cn(
-                "shrink-0 font-mono text-[10.5px]",
-                c.n === 0 ? "text-deck-faint" : "text-deck-dim",
-              )}
-            >
-              {c.n}
-            </span>
-          </div>
-        ))}
+              >
+                {task.title}
+              </span>
+            </button>
+          );
+        })}
+      </Group>
+
+      <Group label="History" trailing={past.length ? String(past.length) : undefined}>
+        {past.length === 0 ? (
+          <p className="px-2 text-[11px] leading-relaxed text-deck-faint">
+            Sessions from earlier runs are listed here once one has finished.
+          </p>
+        ) : (
+          past.map((entry) => {
+            const active = entry.session_id === activeSession;
+            return (
+              <button
+                key={entry.session_id}
+                onClick={() => onOpenSession(entry.session_id)}
+                title={entry.task_title ?? entry.agent_name}
+                className={cn(
+                  "flex flex-col gap-px rounded-md px-2 py-1 text-left transition-colors",
+                  active ? "bg-white/[0.07]" : "hover:bg-white/[0.05]",
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 grow truncate text-[12px] text-deck-dim">
+                    {entry.agent_name}
+                  </span>
+                  <span className="shrink-0 font-mono text-[10px] text-deck-faint">
+                    {ago(entry.ended_at ?? entry.started_at)}
+                  </span>
+                </span>
+                <span className="truncate text-[11px] text-deck-faint">
+                  {entry.task_title ?? entry.status}
+                </span>
+              </button>
+            );
+          })
+        )}
       </Group>
     </aside>
   );
+}
+
+/** Status colour for a task dot, matching the roster's vocabulary. */
+function taskTone(status: string): string {
+  if (status === "running" || status === "review") return "bg-deck-live";
+  if (status === "blocked") return "bg-deck-attention";
+  if (status === "completed") return "bg-deck-done";
+  if (status === "failed" || status === "cancelled") return "bg-deck-faint";
+  return "border border-deck-faint/50";
+}
+
+/** Coarse relative time. Precision past the hour is noise in a list you scan. */
+function ago(at: number | null): string {
+  if (!at) return "";
+  const mins = Math.max(0, Math.round((Date.now() - at) / 60_000));
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
 }
 
 function Group({

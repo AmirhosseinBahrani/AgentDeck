@@ -39,12 +39,21 @@ pub enum IntegrationOutcome {
     /// Everything merged, but the combined result does not work — the failure per-task
     /// verification is structurally unable to catch.
     TestsFailed { output: String },
+    /// Everything merged, but the project has no test command to run against it.
+    ///
+    /// Distinct from `Integrated` because it is a materially weaker claim, and distinct from
+    /// `Inconclusive` because the merge itself did succeed and there is nothing to retry.
+    MergedUnverified { merged: Vec<String>, reason: String },
     /// The integration could not be attempted. Not a verdict on the work.
     Inconclusive { reason: String },
 }
 
 impl WorktreeManager {
     /// Merges every contribution into a scratch worktree and runs `test_command` there.
+    ///
+    /// A `None` command means the project's toolchain was not recognised. The merge still runs —
+    /// conflict detection is worth having on its own — but the result is reported as unverified
+    /// rather than passing.
     ///
     /// The integration tree is disposable and detached: a run must not leave the operator's own
     /// checked-out branch holding a merge they never asked for, and a failed attempt must leave
@@ -54,7 +63,7 @@ impl WorktreeManager {
         repo: &Path,
         base_ref: &str,
         contributions: &[Contribution],
-        test_command: &str,
+        test_command: Option<&str>,
         timeout: Duration,
     ) -> Result<IntegrationOutcome> {
         if contributions.is_empty() {
@@ -106,6 +115,13 @@ impl WorktreeManager {
             }
             merged.push(contribution.branch.clone());
         }
+
+        let Some(test_command) = test_command else {
+            return Ok(IntegrationOutcome::MergedUnverified {
+                merged,
+                reason: "no test command could be identified for this project".into(),
+            });
+        };
 
         match run_tests(&path, test_command, timeout).await {
             TestRun::Passed => Ok(IntegrationOutcome::Integrated { merged }),

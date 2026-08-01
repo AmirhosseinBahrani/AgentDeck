@@ -270,6 +270,38 @@ async fn a_session_the_operator_killed_is_not_offered_as_resumable() {
 }
 
 #[tokio::test]
+async fn history_lists_cleanly_finished_sessions_that_resume_deliberately_excludes() {
+    // The two queries answer different questions and must not be conflated. `resumable` is about
+    // what a crash left behind; `history` is about what has happened here, and reading back a
+    // session that ended normally is the ordinary reason to open the list at all.
+    let dir = Scratch::new("history");
+    let s = store().await;
+    let (crashed, _) = seeded_session(&s, dir.path().to_path_buf()).await;
+    let (clean, _) = seeded_session(&s, dir.path().to_path_buf()).await;
+
+    sessions::record_ended(&s, crashed, &ExitReason::Crashed { code: Some(1) })
+        .await
+        .unwrap();
+    sessions::record_ended(&s, clean, &ExitReason::Clean)
+        .await
+        .unwrap();
+
+    let project = identity::ensure_project(&s, &PathBuf::from("/tmp/repo"))
+        .await
+        .unwrap()
+        .project_id;
+    let history = sessions::history(&s, &project, 10).await.unwrap();
+
+    let ids: Vec<_> = history.iter().map(|h| h.session_id).collect();
+    assert!(ids.contains(&clean), "a clean session belongs in history");
+    assert!(ids.contains(&crashed), "so does a crashed one");
+    assert!(
+        history.iter().all(|h| !h.agent_name.is_empty()),
+        "every entry needs a name to be worth choosing from a list"
+    );
+}
+
+#[tokio::test]
 async fn a_crashed_session_is_offered_and_a_clean_one_is_not() {
     let dir = Scratch::new("crashed");
     let s = store().await;

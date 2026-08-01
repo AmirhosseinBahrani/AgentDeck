@@ -106,6 +106,69 @@ pub async fn mark_interrupted_on_boot(store: &Store) -> Result<u64, StoreError> 
 }
 
 /// Sessions that ended without completing, newest first.
+/// One past session, labelled well enough to be worth choosing from a list.
+#[derive(Debug, Clone)]
+pub struct PastSession {
+    pub session_id: SessionId,
+    pub agent_name: String,
+    /// The task it was working on, when it had one. Sessions outlive the tasks table's rows.
+    pub task_title: Option<String>,
+    pub status: String,
+    pub started_at: Option<i64>,
+    pub ended_at: Option<i64>,
+    pub cost_usd: f64,
+}
+
+/// Every session this project has ever had, newest first.
+///
+/// Separate from [`resumable`], which deliberately returns only the interrupted ones because it
+/// answers "what did the crash leave behind". This answers "what has happened here", so a
+/// cleanly-finished session belongs in it — reading back a completed agent's reasoning is the
+/// ordinary case, not the exceptional one.
+pub async fn history(
+    store: &Store,
+    project_id: &str,
+    limit: i64,
+) -> Result<Vec<PastSession>, StoreError> {
+    let rows: Vec<(
+        String,
+        String,
+        Option<String>,
+        String,
+        Option<i64>,
+        Option<i64>,
+        f64,
+    )> = sqlx::query_as(
+        "SELECT s.id, a.name, t.title, s.status, s.started_at, s.ended_at, s.cost_usd
+             FROM sessions s
+             JOIN agents a ON a.id = s.agent_id
+             LEFT JOIN tasks t ON t.id = s.task_id
+             WHERE s.project_id = ?1
+             ORDER BY COALESCE(s.started_at, s.ended_at) DESC LIMIT ?2",
+    )
+    .bind(project_id)
+    .bind(limit)
+    .fetch_all(store.reader())
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(
+            |(id, agent_name, task_title, status, started_at, ended_at, cost_usd)| {
+                Some(PastSession {
+                    session_id: id.parse::<uuid::Uuid>().ok().map(SessionId::from)?,
+                    agent_name,
+                    task_title,
+                    status,
+                    started_at,
+                    ended_at,
+                    cost_usd,
+                })
+            },
+        )
+        .collect())
+}
+
 pub async fn resumable(store: &Store, limit: i64) -> Result<Vec<ResumableSession>, StoreError> {
     let rows: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT id, task_id, cwd, status FROM sessions

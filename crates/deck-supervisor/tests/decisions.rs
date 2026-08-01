@@ -418,7 +418,7 @@ fn a_planned_task_carrying_only_judgment_criteria_is_repaired_before_use() {
 
     assert!(!planned.contract.has_executable_criterion());
     let repairs =
-        deck_supervisor::contract::validate_and_repair(&mut planned.contract, "cargo test");
+        deck_supervisor::contract::validate_and_repair(&mut planned.contract, Some("cargo test"));
     assert_eq!(repairs.len(), 1);
     assert!(planned.contract.has_executable_criterion());
 }

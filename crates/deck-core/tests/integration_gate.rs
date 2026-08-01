@@ -65,7 +65,7 @@ async fn independent_branches_merge_and_the_project_tests_run_against_the_result
             &repo,
             "main",
             &[a, b],
-            "test -f a.txt && test -f b.txt",
+            Some("test -f a.txt && test -f b.txt"),
             Duration::from_secs(30),
         )
         .await
@@ -74,6 +74,28 @@ async fn independent_branches_merge_and_the_project_tests_run_against_the_result
     match outcome {
         IntegrationOutcome::Integrated { merged } => assert_eq!(merged.len(), 2),
         other => panic!("expected a clean integration, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_project_with_no_test_command_merges_but_does_not_claim_to_pass() {
+    // The supervisor used to be handed `cargo test` for every project regardless of what it was,
+    // so a repository with no Cargo.toml failed the gate with cargo's own error — the supervisor's
+    // wrong assumption, reported to the operator as their agents writing broken code. With no
+    // command to run, the merge still happens (conflicts are worth catching on their own) but the
+    // result must not be recorded as verified.
+    let repo = scratch_repo("nocommand");
+    let a = branch_with(&repo, "agent-a", "one.txt", "one\n");
+
+    let manager = WorktreeManager::new();
+    let outcome = manager
+        .integrate(&repo, "main", &[a], None, Duration::from_secs(30))
+        .await
+        .unwrap();
+
+    match outcome {
+        IntegrationOutcome::MergedUnverified { merged, .. } => assert_eq!(merged.len(), 1),
+        other => panic!("expected an unverified merge, got {other:?}"),
     }
 }
 
@@ -87,7 +109,13 @@ async fn overlapping_work_is_reported_rather_than_resolved() {
 
     let manager = WorktreeManager::new();
     let outcome = manager
-        .integrate(&repo, "main", &[a, b], "true", Duration::from_secs(30))
+        .integrate(
+            &repo,
+            "main",
+            &[a, b],
+            Some("true"),
+            Duration::from_secs(30),
+        )
         .await
         .unwrap();
 
@@ -132,7 +160,7 @@ async fn branches_that_merge_but_do_not_work_together_fail_the_gate() {
             &repo,
             "main",
             &[a, b],
-            "test -f a.txt && test -f b.txt && echo 'incompatible' && exit 1",
+            Some("test -f a.txt && test -f b.txt && echo 'incompatible' && exit 1"),
             Duration::from_secs(30),
         )
         .await
@@ -158,7 +186,13 @@ async fn a_hung_test_suite_is_inconclusive_rather_than_a_failure() {
 
     let manager = WorktreeManager::new();
     let outcome = manager
-        .integrate(&repo, "main", &[a], "sleep 30", Duration::from_millis(300))
+        .integrate(
+            &repo,
+            "main",
+            &[a],
+            Some("sleep 30"),
+            Duration::from_millis(300),
+        )
         .await
         .unwrap();
 
@@ -175,7 +209,7 @@ async fn nothing_to_integrate_is_inconclusive_rather_than_success() {
     let repo = scratch_repo("empty");
     let manager = WorktreeManager::new();
     let outcome = manager
-        .integrate(&repo, "main", &[], "true", Duration::from_secs(5))
+        .integrate(&repo, "main", &[], Some("true"), Duration::from_secs(5))
         .await
         .unwrap();
 
@@ -196,7 +230,7 @@ async fn a_second_attempt_starts_from_the_base_rather_than_the_last_one() {
             &repo,
             "main",
             std::slice::from_ref(&a),
-            "true",
+            Some("true"),
             Duration::from_secs(30),
         )
         .await
@@ -210,7 +244,7 @@ async fn a_second_attempt_starts_from_the_base_rather_than_the_last_one() {
             &repo,
             "main",
             &[a, b],
-            "test -f a.txt && test -f b.txt",
+            Some("test -f a.txt && test -f b.txt"),
             Duration::from_secs(30),
         )
         .await

@@ -129,7 +129,7 @@ async fn a_contract_of_only_judgment_criteria_still_fails_on_a_red_test_after_re
     }]);
 
     assert!(!c.has_executable_criterion());
-    let repairs = validate_and_repair(&mut c, "exit 1");
+    let repairs = validate_and_repair(&mut c, Some("exit 1"));
     assert!(matches!(
         repairs.as_slice(),
         [ContractRepair::InjectedDefaultVerification { .. }]
@@ -152,7 +152,7 @@ async fn a_contract_of_only_judgment_criteria_still_fails_on_a_red_test_after_re
 async fn validation_leaves_a_contract_that_already_verifies_alone() {
     let mut c = contract(vec![command_criterion("tests", "cargo test")]);
     let before = c.clone();
-    let repairs = validate_and_repair(&mut c, "cargo test");
+    let repairs = validate_and_repair(&mut c, Some("cargo test"));
 
     assert!(repairs.is_empty(), "nothing needed repairing");
     assert_eq!(c, before, "a sound contract must not be rewritten");
@@ -172,7 +172,7 @@ async fn validation_generates_ids_for_unnamed_criteria() {
         },
     }]);
 
-    let repairs = validate_and_repair(&mut c, "true");
+    let repairs = validate_and_repair(&mut c, Some("true"));
     assert!(matches!(
         repairs.as_slice(),
         [ContractRepair::GeneratedCriterionId { .. }]

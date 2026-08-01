@@ -30,7 +30,7 @@ fn config(root: PathBuf, autonomy: Autonomy, test_cmd: &str) -> RunConfig {
             agent_id: AgentId::new(),
             role: "developer".into(),
         }],
-        default_test_command: test_cmd.into(),
+        default_test_command: Some(test_cmd.into()),
         verification_root: root,
         limits: RunLimits::default(),
         plan_limits: PlanLimits::default(),

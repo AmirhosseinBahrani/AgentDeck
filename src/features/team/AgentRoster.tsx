@@ -49,7 +49,10 @@ function AgentRow({
   onOpenSession: (sessionId: string) => void;
   onRevoke: (agentId: string) => void;
 }) {
-  const running = agent.status === "running";
+  // Reviewing counts as active for colour and motion — the task is in flight — but the roster
+  // says which, because "finished, waiting on a verdict" and "still typing" are different things
+  // to an operator deciding whether to intervene.
+  const running = agent.status === "running" || agent.status === "reviewing";
   const blocked = agent.status === "blocked";
   const open = agent.session_id ? () => onOpenSession(agent.session_id!) : undefined;
 
@@ -154,6 +157,7 @@ function AgentRow({
 
 function statusSentence(status: string): string {
   if (status === "blocked") return "Blocked — waiting on a decision";
+  if (status === "reviewing") return "Done — waiting on the reviewer";
   if (status === "idle") return "Idle — no task assigned";
   return "Waiting for work";
 }

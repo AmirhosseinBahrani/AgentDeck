@@ -126,3 +126,18 @@ export interface ResumableSummary {
   /** False once the worktree is gone, which makes the conversation unreachable. */
   resumable: boolean;
 }
+
+/** Whether the `claude` CLI is installed and logged in. Not an AgentDeck account — there is none. */
+export type Readiness =
+  | { state: "ready"; version: string; auth: AuthInfo }
+  | { state: "not_installed"; program: string }
+  | { state: "not_authenticated"; version: string }
+  | { state: "unknown"; detail: string };
+
+export interface AuthInfo {
+  method: string | null;
+  email: string | null;
+  /** On subscription billing this, not a dollar budget, is what limits concurrent agents. */
+  subscription: string | null;
+  organization: string | null;
+}

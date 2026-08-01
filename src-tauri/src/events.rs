@@ -222,27 +222,44 @@ pub async fn start_supervisor_run(
         );
     };
 
-    // The three seeded roles. Team configuration arrives with the project model; hard-coding them
-    // here keeps this honest about what exists rather than pretending to read config.
-    //
-    // Registered rather than freshly minted each run: an agent id that changed on every launch
-    // would scatter one agent's history across a new row per run, and nothing downstream could
-    // answer "what has the reviewer done".
-    let mut team = Vec::new();
-    for role in ["developer", "reviewer"] {
-        let agent_id = deck_core::store::identity::ensure_agent(
-            &state.store,
-            &state.identity,
-            deck_core::domain::ids::AgentId::new(),
-            role,
-        )
+    // The team is whoever is on the roster. Seeded on first run so a fresh install has someone
+    // to work with, but hiring and revoking change it from then on — the supervisor assigns by
+    // matching a task's role against the agents holding it, so a new role is assignable the
+    // moment it exists.
+    let roster = deck_core::store::agents::active(&state.store, &state.identity)
         .await
-        .map_err(|e| format!("could not register the {role}: {e}"))?;
-        team.push(TeamMember {
-            agent_id,
-            role: role.into(),
-        });
-    }
+        .map_err(|e| format!("could not read the team: {e}"))?;
+
+    let roster = if roster.is_empty() {
+        for (name, role) in [("Developer", "developer"), ("Reviewer", "reviewer")] {
+            deck_core::store::agents::hire(
+                &state.store,
+                &state.identity,
+                &deck_core::store::agents::NewAgent {
+                    name: name.into(),
+                    role: role.into(),
+                    model: None,
+                    system_prompt: None,
+                    mcp_servers: Vec::new(),
+                },
+            )
+            .await
+            .map_err(|e| format!("could not seed the team: {e}"))?;
+        }
+        deck_core::store::agents::active(&state.store, &state.identity)
+            .await
+            .map_err(|e| format!("could not read the team: {e}"))?
+    } else {
+        roster
+    };
+
+    let team: Vec<TeamMember> = roster
+        .iter()
+        .map(|a| TeamMember {
+            agent_id: a.id,
+            role: a.role.clone(),
+        })
+        .collect();
 
     let config = RunConfig {
         objective,
@@ -338,10 +355,9 @@ pub async fn start_supervisor_run(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or_default(),
-        team: config
-            .team
+        team: roster
             .iter()
-            .map(|m| (m.agent_id, m.role.clone()))
+            .map(|a| (a.id, a.role.clone(), a.name.clone()))
             .collect(),
     };
     // Published before the loop starts. The first iteration cannot finish until the planner has
@@ -529,6 +545,115 @@ pub async fn answer_escalation(
         let _ = triggers.try_send(deck_supervisor::loop_engine::Trigger::HumanAnswered);
     }
     Ok(())
+}
+
+/// Everyone on the team, whether or not a run is active.
+///
+/// Read from the roster rather than the run snapshot: the team exists between runs, and hiring
+/// someone before starting anything is the normal way to set a project up.
+#[tauri::command]
+pub async fn list_agents(
+    state: State<'_, AppState>,
+) -> Result<Vec<deck_core::store::agents::AgentRecord>, String> {
+    deck_core::store::agents::active(&state.store, &state.identity)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Adds someone to the team.
+///
+/// Takes effect from the supervisor's next iteration rather than immediately: assignments are
+/// made in the Assign stage, and injecting an agent mid-iteration would change the eligible set
+/// underneath code already choosing from it.
+#[tauri::command]
+pub async fn hire_agent(
+    state: State<'_, AppState>,
+    name: String,
+    role: String,
+    model: Option<String>,
+    system_prompt: Option<String>,
+    mcp_servers: Option<Vec<String>>,
+) -> Result<deck_core::store::agents::AgentRecord, String> {
+    if name.trim().is_empty() || role.trim().is_empty() {
+        return Err("an agent needs a name and a role".into());
+    }
+
+    deck_core::store::agents::hire(
+        &state.store,
+        &state.identity,
+        &deck_core::store::agents::NewAgent {
+            name: name.trim().to_string(),
+            role: role.trim().to_lowercase(),
+            model,
+            system_prompt: system_prompt.filter(|p| !p.trim().is_empty()),
+            mcp_servers: mcp_servers.unwrap_or_default(),
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// What revoking an agent would interrupt.
+///
+/// Asked for before the confirmation is shown, because the cost of removing someone is entirely
+/// in what they are holding — a live session, assigned tasks, uncommitted files — and a dialog
+/// that did not say so would be asking for a decision with the relevant facts withheld.
+#[derive(serde::Serialize)]
+pub struct RevokeImpact {
+    pub live_sessions: usize,
+    pub assigned_tasks: Vec<String>,
+    pub branch: Option<String>,
+}
+
+#[tauri::command]
+pub async fn revoke_impact(
+    state: State<'_, AppState>,
+    agent_id: String,
+) -> Result<RevokeImpact, String> {
+    let snapshot = state.run_snapshot.lock().clone().unwrap_or_default();
+    let agent = snapshot.agents.iter().find(|a| a.id == agent_id);
+
+    Ok(RevokeImpact {
+        live_sessions: usize::from(agent.and_then(|a| a.session_id.as_ref()).is_some()),
+        assigned_tasks: agent.and_then(|a| a.activity.clone()).into_iter().collect(),
+        branch: agent.and_then(|a| a.branch.clone()),
+    })
+}
+
+/// Takes someone off the roster.
+///
+/// Their session is stopped, but their worktree, branch and history are kept — the design calls
+/// this reversible, and it only is if the work survives. Tasks they were holding go back through
+/// the supervisor on the next iteration rather than being cancelled.
+#[tauri::command]
+pub async fn revoke_agent(state: State<'_, AppState>, agent_id: String) -> Result<bool, String> {
+    let id = agent_id
+        .parse::<uuid::Uuid>()
+        .map(deck_core::domain::ids::AgentId::from)
+        .map_err(|_| format!("{agent_id} is not an agent id"))?;
+
+    // Stop the agent first. Revoking while it keeps writing would leave the roster and the
+    // worktree disagreeing about whether it is still on the team.
+    let snapshot = state.run_snapshot.lock().clone().unwrap_or_default();
+    if let Some(task_id) = snapshot
+        .agents
+        .iter()
+        .find(|a| a.id == agent_id)
+        .and_then(|a| a.task_id.clone())
+    {
+        if let Some(live) = state.live_run.lock().await.clone() {
+            if let Ok(tid) = task_id
+                .parse::<uuid::Uuid>()
+                .map(deck_core::domain::ids::TaskId::from)
+            {
+                live.kill_task(tid);
+            }
+        }
+    }
+
+    deck_core::store::agents::revoke(&state.store, id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// What each agent has actually changed.
@@ -833,24 +958,8 @@ pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot,
 pub struct RunMeta {
     pub run_id: String,
     pub started_at_ms: i64,
-    pub team: Vec<(deck_core::domain::ids::AgentId, String)>,
-}
-
-/// A role rendered as the job it is. Agents have no separate name yet, and "developer" in a
-/// roster of people reads as a placeholder where "Developer" reads as a seat on the team.
-fn display_name(role: &str) -> String {
-    match role {
-        "developer" => "Developer".into(),
-        "reviewer" => "Reviewer".into(),
-        "supervisor" => "Supervisor".into(),
-        other => {
-            let mut c = other.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                None => String::new(),
-            }
-        }
-    }
+    /// (id, role, display name) for everyone on the team this run started with.
+    pub team: Vec<(deck_core::domain::ids::AgentId, String, String)>,
 }
 
 /// Flattens a run into what the dashboard shows.
@@ -904,7 +1013,7 @@ fn snapshot_of(
     let agents: Vec<AgentSummary> = meta
         .team
         .iter()
-        .map(|(agent_id, role)| {
+        .map(|(agent_id, role, name)| {
             // Sorted before picking. The graph stores tasks in a HashMap, so iteration order
             // differs between calls — an agent holding two active tasks would appear to be on a
             // different one each time the dashboard polled, and its status would flicker.
@@ -929,7 +1038,7 @@ fn snapshot_of(
 
             AgentSummary {
                 id: agent_id.to_string(),
-                name: display_name(role),
+                name: name.clone(),
                 role: role.clone(),
                 status: status.to_string(),
                 activity: current.and_then(|t| run.titles.get(&t.id).cloned()),

@@ -9,6 +9,7 @@ import { TitleBar } from "./features/shell/TitleBar";
 import { TeamView } from "./features/team/TeamView";
 import { DecisionsView } from "./features/views/DecisionsView";
 import { DiffsView } from "./features/views/DiffsView";
+import { SupervisorView } from "./features/views/SupervisorView";
 import { TaskGraphView } from "./features/views/TaskGraphView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import { useEventPump, usePumpStats, useSessionSubscriptions } from "./hooks/useEventPump";
@@ -118,6 +119,12 @@ function Deck() {
       {view === "decisions" && (
         <div className="min-h-0 flex-1">
           <DecisionsView snapshot={snapshot} />
+        </div>
+      )}
+
+      {view === "supervisor" && (
+        <div className="min-h-0 flex-1">
+          <SupervisorView snapshot={snapshot} />
         </div>
       )}
 

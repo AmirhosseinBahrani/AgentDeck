@@ -53,6 +53,10 @@ pub fn run() {
             events::check_runtime,
             events::answer_escalation,
             events::get_task_diffs,
+            events::list_agents,
+            events::hire_agent,
+            events::revoke_impact,
+            events::revoke_agent,
         ])
         .setup(|app| {
             background::install_tray(app.handle())?;

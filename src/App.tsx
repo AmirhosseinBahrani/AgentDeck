@@ -1,38 +1,30 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Boxes, PanelsTopLeft } from "lucide-react";
-import { TitleBar } from "./features/shell/TitleBar";
-import type { RunSnapshot } from "./lib/types";
 import { useEffect, useState } from "react";
 import { TooltipProvider } from "./components/ui/tooltip";
-import { cn } from "./lib/utils";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
 import { RuntimeGate } from "./features/setup/RuntimeGate";
+import { TitleBar } from "./features/shell/TitleBar";
 import { TeamView } from "./features/team/TeamView";
-import { TranscriptView } from "./features/sessions/TranscriptView";
-import {
-  useEventPump,
-  usePumpStats,
-  useSessionSubscriptions,
-} from "./hooks/useEventPump";
+import { WorkspaceView } from "./features/workspace/WorkspaceView";
+import { useEventPump, usePumpStats, useSessionSubscriptions } from "./hooks/useEventPump";
+import type { RunSnapshot } from "./lib/types";
 import "./index.css";
 
 /**
- * M1 shell.
+ * The shell.
  *
- * This is intentionally *not* a chat window with a sidebar. The spec's central point is that
- * the product is Objective → Supervisor Run → Task Graph → Agents → Sessions, and that tabs
- * are only one way to observe sessions. So the layout is a dashboard frame with the session
- * transcript occupying a panel inside it — the Team View content fills in at M4/M6, but the
- * hierarchy is established now rather than retrofitted around a chat.
+ * Deliberately *not* a chat window with a sidebar. The product is Objective → Run → Task Graph →
+ * Agents → Sessions, and a transcript is one way to observe a session rather than the thing
+ * itself — so Team is the landing surface and the workspace is reached from it, never the other
+ * way round. That ordering is what stops this becoming a tab manager.
  */
 export default function App() {
   return (
-    // Everything below assumes a working `claude` CLI, so nothing below mounts until there is
-    // one — including the event pump, which would otherwise stream an empty transcript at
-    // someone whose real problem is that the CLI is not installed.
-    // Radix tooltips need one provider above everything that uses them; a short delay keeps
-    // them from firing while the pointer is merely crossing the panel.
+    // Nothing mounts until there is a working CLI — including the event pump, which would
+    // otherwise stream an empty transcript at someone whose real problem is that nothing is
+    // installed. Radix tooltips need one provider above everything that uses them; the delay
+    // keeps them from firing while the pointer is merely crossing a panel.
     <TooltipProvider delayDuration={350} skipDelayDuration={0}>
       <RuntimeGate>
         <Deck />
@@ -44,178 +36,89 @@ export default function App() {
 function Deck() {
   useEventPump();
 
-  // Polled here as well as in TeamView: the title bar is outside the view and still has to show
-  // the autonomy mode the supervisor is actually enforcing.
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
-  useEffect(() => {
-    const read = () =>
-      void invoke<RunSnapshot>("get_run_snapshot").then(setSnapshot).catch(() => {});
-    read();
-    const id = setInterval(read, 2000);
-    return () => clearInterval(id);
-  }, []);
-
-  const [fixtures, setFixtures] = useState<string[]>([]);
   const [sessions, setSessions] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  // Team View is the landing surface, not a chat. Sessions are reachable from it rather than the
-  // other way round, which is what keeps the product from becoming a tab manager.
-  const [view, setView] = useState<"team" | "sessions">("team");
+  const [view, setView] = useState<"team" | "workspace">("team");
   const stats = usePumpStats();
 
   // Rust drops token deltas for anything not in this list, so it must reflect what is visible.
   useSessionSubscriptions(active ? [active] : []);
 
+  // Polled here as well as inside the views: the title bar sits outside both and still has to
+  // show the autonomy mode the supervisor is actually enforcing.
   useEffect(() => {
-    void invoke<string[]>("list_fixtures").then(setFixtures).catch(() => {});
+    const read = () =>
+      void invoke<RunSnapshot>("get_run_snapshot")
+        .then(setSnapshot)
+        .catch(() => {});
+    read();
+    const id = setInterval(read, 2000);
+    return () => clearInterval(id);
   }, []);
 
-  async function startReplay(name: string) {
-    const id = await invoke<string>("replay_fixture", { name });
-    setSessions((prev) => [...prev, id]);
-    setActive(id);
+  /** Opens a session, registering it first so a live agent is reachable rather than unknown. */
+  function openSession(sessionId?: string) {
+    if (sessionId) {
+      setSessions((prev) => (prev.includes(sessionId) ? prev : [...prev, sessionId]));
+      setActive(sessionId);
+    }
+    setView("workspace");
   }
 
   return (
     <div className="relative flex h-full flex-col text-deck-text">
       <TitleBar
-        project={snapshot?.objective ? "run in progress" : "no run"}
+        project={snapshot?.objective ? shorten(snapshot.objective) : "no run"}
         autonomy={snapshot?.autonomy ?? "assisted"}
         running={!!snapshot?.active}
       />
 
-      <nav className="glass-flat flex h-8 shrink-0 items-center gap-0.5 border-b border-white/[0.07] px-3">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setView(tab.id)}
-            className={cn(
-              "flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px] transition-colors",
-              view === tab.id
-                ? "bg-white/12 font-medium text-deck-text"
-                : "text-deck-faint hover:text-deck-dim",
-            )}
-          >
-            {tab.icon}
-            {tab.label}
-          </button>
-        ))}
-        <div className="grow" />
-        {/* Pump telemetry. Kept because a growing gap count is the first sign the event bridge
-            is dropping batches, and that is invisible everywhere else. */}
-        <span className="flex items-center gap-3 font-mono text-[10px] text-deck-faint">
-          <span>{stats.events} events</span>
-          <span className={stats.gaps > 0 ? "text-deck-attention" : undefined}>
-            {stats.gaps} gaps
-          </span>
-        </span>
-      </nav>
-
-      {/* Outside the router and the session panel: an agent can block while the operator is
-          looking elsewhere, and a prompt buried in a hidden transcript would time out unseen. */}
+      {/* Outside both views: an agent can block while the operator is looking elsewhere, and a
+          prompt buried in a hidden transcript would time out unseen. */}
       <EscalationLayer />
 
-      {/* Above the view switch: what a crash left behind is true of the whole app, not of
-          whichever surface happens to be open. */}
+      {/* Above the view switch, because what a crash left behind is true of the whole app. */}
       <RecoveryBanner />
 
       {view === "team" ? (
         <div className="min-h-0 flex-1">
-          <TeamView
-            onOpenSession={(sessionId) => {
-              // Registering it here is what makes a real agent reachable: the list was only ever
-              // fed by fixture replay, so a live session had no entry to select.
-              if (sessionId) {
-                setSessions((prev) => (prev.includes(sessionId) ? prev : [...prev, sessionId]));
-                setActive(sessionId);
-              }
-              setView("sessions");
-            }}
-          />
+          <TeamView onOpenSession={openSession} />
         </div>
       ) : (
-      <div className="flex min-h-0 flex-1">
-        <aside className="glass-flat flex w-56 shrink-0 flex-col border-r border-white/8">
-          <Section title="Replay a captured session">
-            {fixtures.length === 0 && (
-              <p className="px-2 text-[11px] text-deck-faint">No fixtures embedded</p>
-            )}
-            {fixtures.map((name) => (
-              <button
-                key={name}
-                onClick={() => void startReplay(name)}
-                className="w-full rounded px-2 py-1 text-left text-[12px] text-deck-dim transition-colors hover:bg-white/8 hover:text-deck-text"
-              >
-                {name}
-              </button>
-            ))}
-          </Section>
-
-          <Section title={`Sessions (${sessions.length})`}>
-            {sessions.length === 0 && (
-              <p className="px-2 text-[11px] leading-relaxed text-deck-faint">
-                Start a replay to stream a captured session — no CLI or rate limit needed.
-              </p>
-            )}
-            {sessions.map((id, i) => (
-              <button
-                key={id}
-                onClick={() => setActive(id)}
-                className={cn(
-                  "flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px] transition-colors",
-                  active === id
-                    ? "bg-white/12 text-deck-text"
-                    : "text-deck-dim hover:bg-white/6",
-                )}
-              >
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    active === id ? "ring-live animate-live bg-deck-live" : "bg-deck-faint",
-                  )}
-                />
-                <span className="truncate font-mono text-[11px]">
-                  session {i + 1} · {id.slice(0, 8)}
-                </span>
-              </button>
-            ))}
-          </Section>
-        </aside>
-
-        <main className="flex min-w-0 flex-1 flex-col">
-          <div className="glass-flat flex h-8 shrink-0 items-center border-b border-white/8 px-3 text-[11px] text-deck-faint">
-            {active ? (
-              <span className="font-mono">{active}</span>
-            ) : (
-              <span>No active session</span>
-            )}
-          </div>
-          <div className="min-h-0 flex-1">
-            <TranscriptView sessionId={active} />
-          </div>
-        </main>
-      </div>
+        <WorkspaceView
+          sessions={sessions}
+          active={active}
+          onSelect={setActive}
+          onClose={(id) => {
+            setSessions((prev) => prev.filter((s) => s !== id));
+            // Focus falls to whatever is left rather than to nothing: closing a tab and landing
+            // on an empty pane loses your place for no reason.
+            setActive((cur) => (cur === id ? (sessions.find((s) => s !== id) ?? null) : cur));
+          }}
+          onOpenTeam={() => setView("team")}
+        />
       )}
 
-      <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-white/6 px-3 font-mono text-[10px] text-deck-faint">
-        <span>Sessions: {sessions.length}</span>
-        <span>Watching: {active ? 1 : 0}</span>
-        <span>Last seq: {stats.lastSeq}</span>
+      <footer className="flex h-6 shrink-0 items-center gap-4 border-t border-white/[0.06] px-3 font-mono text-[10px] text-deck-faint">
+        <span>{snapshot?.engaged ?? 0} running</span>
+        <span>{snapshot?.agents.length ?? 0} agents</span>
+        <span>{snapshot?.tasks.length ?? 0} tasks</span>
+        <span>{sessions.length} sessions</span>
+        <div className="grow" />
+        <span>{stats.events} events</span>
+        {/* A growing gap count is the first sign the event bridge is dropping batches, and that
+            is invisible everywhere else in the app. */}
+        <span className={stats.gaps > 0 ? "text-deck-attention" : undefined}>
+          {stats.gaps} gaps
+        </span>
+        <span>${(snapshot?.spent_usd ?? 0).toFixed(2)} today</span>
       </footer>
     </div>
   );
 }
 
-const TABS = [
-  { id: "team" as const, label: "Team", icon: <Boxes className="size-3" /> },
-  { id: "sessions" as const, label: "Sessions", icon: <PanelsTopLeft className="size-3" /> },
-];
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="border-b border-white/6 p-2">
-      <h2 className="label-micro mb-1.5 px-2">{title}</h2>
-      <div className="space-y-0.5">{children}</div>
-    </div>
-  );
+function shorten(objective: string): string {
+  const words = objective.trim().split(/\s+/).slice(0, 6).join(" ");
+  return words.length < objective.trim().length ? `${words}…` : words;
 }

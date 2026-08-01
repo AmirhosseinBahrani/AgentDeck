@@ -252,6 +252,53 @@ async fn the_loop_exits_immediately_on_cancel() {
 }
 
 #[tokio::test]
+async fn a_cancelled_run_publishes_its_final_state_before_exiting() {
+    // The bug this covers: cancelling returned straight out of the select without touching the
+    // phase or notifying the observer, so the last thing the dashboard ever saw said the run was
+    // still going. Its Stop button stayed the only control on screen and the operator had no way
+    // back to a start screen short of restarting the app.
+    let root = workdir("cancelobserve");
+    let cfg = config(root.clone());
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan(), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let mut run = Run::new();
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        let _ = tx.send(Trigger::CancelRequested).await;
+    });
+
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorder = seen.clone();
+
+    let exit = tokio::time::timeout(
+        Duration::from_secs(10),
+        RunLoop::new(rx)
+            .with_tick(Duration::from_secs(30))
+            .observing(move |run: &Run| recorder.lock().unwrap().push(run.state.phase))
+            .run(&driver, &mut run),
+    )
+    .await
+    .expect("no hang");
+
+    assert_eq!(exit, LoopExit::Cancelled);
+    assert_eq!(
+        run.state.phase,
+        RunPhase::Cancelled,
+        "cancelling should leave the run recorded as cancelled"
+    );
+    assert_eq!(
+        seen.lock().unwrap().last().copied(),
+        Some(RunPhase::Cancelled),
+        "the observer must see the cancelled phase, since it is what the dashboard renders"
+    );
+}
+
+#[tokio::test]
 async fn cancel_is_honoured_even_when_it_arrives_in_a_burst() {
     // Coalescing must not swallow a cancel: it is the one trigger that changes the outcome rather
     // than just scheduling work.

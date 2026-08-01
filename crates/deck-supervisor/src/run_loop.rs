@@ -116,18 +116,31 @@ impl<'a> RunLoop<'a> {
             tokio::select! {
                 received = self.triggers.recv() => {
                     match received {
-                        Some(Trigger::CancelRequested) => return LoopExit::Cancelled,
+                        Some(Trigger::CancelRequested) => {
+                            // Set and published before returning. Cancelling used to leave the
+                            // run's last snapshot saying it was still active, so the dashboard
+                            // showed a live run forever and its Stop button never became
+                            // anything else — the operator could not get back to a start screen.
+                            run.state.phase = RunPhase::Cancelled;
+                            observe!();
+                            return LoopExit::Cancelled;
+                        }
                         Some(trigger) => {
                             // Coalesce: several agents reporting at once should cause one
                             // iteration, not one each.
                             dirty = dirty || trigger.marks_dirty();
                             while let Ok(extra) = self.triggers.try_recv() {
                                 if extra == Trigger::CancelRequested {
+                                    run.state.phase = RunPhase::Cancelled;
+                                    observe!();
                                     return LoopExit::Cancelled;
                                 }
                                 dirty = dirty || extra.marks_dirty();
                             }
                         }
+                        // Deliberately does not touch the phase. A run parked on
+                        // `BlockedOnHuman` loses its senders when the app tears down, and
+                        // overwriting that with `Cancelled` would misreport why it stopped.
                         None => return LoopExit::ChannelClosed,
                     }
                 }

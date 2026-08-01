@@ -77,7 +77,12 @@ pub struct AppState {
     /// agents belonging to a second instance running right now.
     pub boot: BootId,
     /// The workspace and project rows every durable record hangs off.
-    pub identity: LocalIdentity,
+    ///
+    /// Swappable alongside the project. It was previously fixed at startup, so after opening a
+    /// different repository every write still keyed off the old project — runs were persisted
+    /// under it, and the roster and history read from it, which is why history looked empty for
+    /// a project that had just been used.
+    pub identity: Arc<parking_lot::RwLock<LocalIdentity>>,
     /// The repository this instance works on, or `None` when it was not started inside one.
     pub project: Arc<parking_lot::RwLock<Option<std::path::PathBuf>>>,
     /// What the boot-time reconcile found, so the UI can say so instead of it happening
@@ -202,7 +207,7 @@ impl AppState {
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_guidance: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,
-            identity,
+            identity: Arc::new(parking_lot::RwLock::new(identity)),
             project: Arc::new(parking_lot::RwLock::new(project)),
             startup_recovery,
         })
@@ -258,7 +263,8 @@ impl AppState {
 
     /// What the last run in this project was doing, so a relaunch is not a blank screen.
     pub async fn last_run(&self) -> Option<runs::PastRun> {
-        runs::last_run(&self.store, &self.identity.project_id)
+        let project_id = self.identity.read().project_id.clone();
+        runs::last_run(&self.store, &project_id)
             .await
             .unwrap_or_default()
     }
@@ -320,13 +326,15 @@ impl AppState {
             ));
         };
 
-        identity::ensure_project(&self.store, &repo)
+        let identity = identity::ensure_project(&self.store, &repo)
             .await
             .map_err(|e| format!("could not register that project: {e}"))?;
         identity::set_active_project(&self.store, &repo)
             .await
             .map_err(|e| format!("could not remember that project: {e}"))?;
 
+        // Everything durable hangs off this, so it has to move with the project.
+        *self.identity.write() = identity;
         *self.workspaces.write() = Arc::new(WorkspaceRegistry::new(repo.clone()));
         *self.project.write() = Some(repo);
         Ok(())

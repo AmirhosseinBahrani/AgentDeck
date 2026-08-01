@@ -224,7 +224,8 @@ pub async fn start_supervisor_run(
     // to work with, but hiring and revoking change it from then on — the supervisor assigns by
     // matching a task's role against the agents holding it, so a new role is assignable the
     // moment it exists.
-    let roster = deck_core::store::agents::active(&state.store, &state.identity)
+    let identity = state.identity.read().clone();
+    let roster = deck_core::store::agents::active(&state.store, &identity)
         .await
         .map_err(|e| format!("could not read the team: {e}"))?;
 
@@ -232,7 +233,7 @@ pub async fn start_supervisor_run(
         for (name, role) in [("Developer", "developer"), ("Reviewer", "reviewer")] {
             deck_core::store::agents::hire(
                 &state.store,
-                &state.identity,
+                &identity,
                 &deck_core::store::agents::NewAgent {
                     name: name.into(),
                     role: role.into(),
@@ -244,7 +245,7 @@ pub async fn start_supervisor_run(
             .await
             .map_err(|e| format!("could not seed the team: {e}"))?;
         }
-        deck_core::store::agents::active(&state.store, &state.identity)
+        deck_core::store::agents::active(&state.store, &identity)
             .await
             .map_err(|e| format!("could not read the team: {e}"))?
     } else {
@@ -303,7 +304,7 @@ pub async fn start_supervisor_run(
         sink,
         state.store.clone(),
         state.boot.clone(),
-        state.identity.clone(),
+        identity.clone(),
     ));
     let planner = crate::supervision::CliPlanner::new(repo);
 
@@ -379,7 +380,7 @@ pub async fn start_supervisor_run(
     let persist = crate::persistence::RunWriter::new(
         state.store.clone(),
         run_id,
-        state.identity.project_id.clone(),
+        identity.project_id.clone(),
         config.objective.clone(),
         config.autonomy.as_str().to_string(),
         config.limits.max_cost_usd,
@@ -549,6 +550,20 @@ pub async fn answer_escalation(
     Ok(())
 }
 
+/// Clears the finished run so the operator can start another.
+///
+/// There was no way back to the start screen once a run ended: the snapshot kept its objective,
+/// so the dashboard kept rendering a run that was over, and starting anything else meant
+/// restarting the app. Refused while a run is live — that is what Stop is for.
+#[tauri::command]
+pub async fn clear_run(state: State<'_, AppState>) -> Result<(), String> {
+    if state.live_run.lock().await.is_some() {
+        return Err("Stop the run before starting another.".into());
+    }
+    *state.run_snapshot.lock() = None;
+    Ok(())
+}
+
 /// Runs this project has had before, newest first.
 ///
 /// A run cannot literally be resumed — its agents exited and its loop is gone — so history
@@ -556,8 +571,9 @@ pub async fn answer_escalation(
 /// screen; the previous attempt's tasks, decisions and cost stay readable beside it.
 #[tauri::command]
 pub async fn list_runs(state: State<'_, AppState>) -> Result<Vec<PastRunSummary>, String> {
+    let project_id = state.identity.read().project_id.clone();
     Ok(
-        deck_core::store::runs::recent(&state.store, &state.identity.project_id, 20)
+        deck_core::store::runs::recent(&state.store, &project_id, 20)
             .await
             .unwrap_or_default()
             .into_iter()
@@ -730,7 +746,8 @@ pub async fn set_project(state: State<'_, AppState>, path: String) -> Result<Pro
 pub async fn list_agents(
     state: State<'_, AppState>,
 ) -> Result<Vec<deck_core::store::agents::AgentRecord>, String> {
-    deck_core::store::agents::active(&state.store, &state.identity)
+    let identity = state.identity.read().clone();
+    deck_core::store::agents::active(&state.store, &identity)
         .await
         .map_err(|e| e.to_string())
 }
@@ -753,9 +770,10 @@ pub async fn hire_agent(
         return Err("an agent needs a name and a role".into());
     }
 
+    let identity = state.identity.read().clone();
     deck_core::store::agents::hire(
         &state.store,
-        &state.identity,
+        &identity,
         &deck_core::store::agents::NewAgent {
             name: name.trim().to_string(),
             role: role.trim().to_lowercase(),
@@ -1028,7 +1046,7 @@ pub async fn resume_session(
 /// A single query rather than several: the Team View needs objective, phase, agents and task
 /// counts to agree with each other, and fetching them separately would let the UI render a
 /// half-updated picture mid-iteration.
-#[derive(serde::Serialize, Default, Clone)]
+#[derive(serde::Serialize, Clone)]
 pub struct RunSnapshot {
     pub active: bool,
     pub objective: String,
@@ -1090,6 +1108,36 @@ pub struct GraphEdge {
     pub to: String,
     /// "hard" blocks readiness; "soft" only orders the work.
     pub kind: String,
+}
+
+impl Default for RunSnapshot {
+    /// The state before any run exists.
+    ///
+    /// Written out rather than derived because `autonomy` is an enum rendered as a string, and
+    /// the derived default is `""` — which is not a mode. The title bar showed an empty pill
+    /// with no label, since a `?? "assisted"` fallback in the UI only catches null.
+    fn default() -> Self {
+        Self {
+            active: false,
+            objective: String::new(),
+            phase: String::new(),
+            iteration: 0,
+            spent_usd: 0.0,
+            open_escalations: 0,
+            autonomy: "assisted".into(),
+            integrated: false,
+            escalations: Vec::new(),
+            guidance: Vec::new(),
+            tasks: Vec::new(),
+            decisions: Vec::new(),
+            run_id: String::new(),
+            started_at_ms: 0,
+            agents: Vec::new(),
+            edges: Vec::new(),
+            max_concurrent: 0,
+            engaged: 0,
+        }
+    }
 }
 
 #[derive(serde::Serialize, Clone)]

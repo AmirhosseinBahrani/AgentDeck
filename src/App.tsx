@@ -85,7 +85,7 @@ function Deck() {
         project={project?.name ?? "no project"}
         projectPath={project?.path ?? undefined}
         onChangeProject={() => void picker.pick()}
-        autonomy={snapshot?.autonomy ?? "assisted"}
+        autonomy={snapshot?.autonomy || "assisted"}
         running={!!snapshot?.active}
       />
 

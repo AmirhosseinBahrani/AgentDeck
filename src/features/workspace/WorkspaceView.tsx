@@ -23,13 +23,11 @@ export function WorkspaceView({
   active,
   onSelect,
   onClose,
-  onOpenTeam,
 }: {
   sessions: string[];
   active: string | null;
   onSelect: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
-  onOpenTeam: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,7 +104,6 @@ export function WorkspaceView({
           agentFor={agentFor}
           onSelect={onSelect}
           onClose={onClose}
-          onOpenTeam={onOpenTeam}
         />
 
         {current && <SessionHeader agent={current} onKill={kill} />}
@@ -221,14 +218,12 @@ function SessionTabs({
   agentFor,
   onSelect,
   onClose,
-  onOpenTeam,
 }: {
   sessions: string[];
   active: string | null;
   agentFor: (id: string) => AgentSummary | null;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
-  onOpenTeam: () => void;
 }) {
   return (
     <div className="glass-flat flex h-10 shrink-0 items-end gap-0.5 border-b border-white/[0.07] px-2.5">
@@ -283,12 +278,6 @@ function SessionTabs({
         );
       })}
       <div className="grow" />
-      <button
-        onClick={onOpenTeam}
-        className="pb-2.5 text-[11px] text-deck-faint transition-colors hover:text-deck-dim"
-      >
-        ← Team
-      </button>
     </div>
   );
 }

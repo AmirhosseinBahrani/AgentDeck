@@ -7,7 +7,7 @@
 use crate::state::AppState;
 use deck_core::domain::event::EventEnvelope;
 use deck_core::domain::ids::{Seq, SessionId};
-use deck_core::domain::task::TaskStatus;
+use deck_core::domain::task::{TaskState, TaskStatus};
 use deck_core::ipc::{is_critical, Coalescer, EventBatch, FLUSH_INTERVAL};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -344,6 +344,21 @@ pub async fn start_supervisor_run(
             .map(|m| (m.agent_id, m.role.clone()))
             .collect(),
     };
+    // Published before the loop starts. The first iteration cannot finish until the planner has
+    // answered, which takes tens of seconds — and until this landed the dashboard showed the
+    // "no run" screen the whole time, so pressing Start looked like it had done nothing.
+    {
+        let mut initial = snapshot_of(
+            &config.objective,
+            config.autonomy,
+            &Run::new(),
+            &meta_for_snapshot,
+        );
+        initial.active = true;
+        initial.phase = "planning".into();
+        *state.run_snapshot.lock() = Some(initial);
+    }
+
     let persist = crate::persistence::RunWriter::new(
         state.store.clone(),
         run_id,
@@ -373,10 +388,9 @@ pub async fn start_supervisor_run(
             // way a long run is watched.
             crate::background::update_tray(&app_handle, &snapshot);
             persist.record(run);
-            let slot = snapshot_slot.clone();
-            tauri::async_runtime::spawn(async move {
-                *slot.lock().await = Some(snapshot);
-            });
+            // Written here rather than from a spawned task: iterations are ordered, and two
+            // async writes racing is what made the dashboard flicker between states.
+            *snapshot_slot.lock() = Some(snapshot);
         };
 
         let exit = RunLoop::new(trigger_rx)
@@ -751,7 +765,7 @@ pub struct DecisionSummary {
 
 #[tauri::command]
 pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot, String> {
-    let snapshot = state.run_snapshot.lock().await.clone();
+    let snapshot = state.run_snapshot.lock().clone();
     Ok(snapshot.unwrap_or_default())
 }
 
@@ -832,16 +846,21 @@ fn snapshot_of(
         .team
         .iter()
         .map(|(agent_id, role)| {
-            let current = run
+            // Sorted before picking. The graph stores tasks in a HashMap, so iteration order
+            // differs between calls — an agent holding two active tasks would appear to be on a
+            // different one each time the dashboard polled, and its status would flicker.
+            let mut mine: Vec<&TaskState> = run
                 .graph
                 .tasks()
                 .filter(|t| t.assignee == Some(*agent_id))
+                .collect();
+            mine.sort_by_key(|t| t.id);
+
+            let current = mine
+                .iter()
                 .find(|t| matches!(t.status, TaskStatus::Running | TaskStatus::Review))
-                .or_else(|| {
-                    run.graph
-                        .tasks()
-                        .find(|t| t.assignee == Some(*agent_id) && t.status == TaskStatus::Blocked)
-                });
+                .or_else(|| mine.iter().find(|t| t.status == TaskStatus::Blocked))
+                .copied();
 
             let status = match current.map(|t| t.status) {
                 Some(TaskStatus::Running) | Some(TaskStatus::Review) => "running",

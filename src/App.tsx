@@ -4,6 +4,7 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
 import { RuntimeGate } from "./features/setup/RuntimeGate";
+import { NavTabs, type NavTab } from "./features/shell/NavTabs";
 import { TitleBar } from "./features/shell/TitleBar";
 import { TeamView } from "./features/team/TeamView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
@@ -39,7 +40,7 @@ function Deck() {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [sessions, setSessions] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
-  const [view, setView] = useState<"team" | "workspace">("team");
+  const [view, setView] = useState<NavTab>("team");
   const stats = usePumpStats();
 
   // Rust drops token deltas for anything not in this list, so it must reflect what is visible.
@@ -81,6 +82,18 @@ function Deck() {
       {/* Above the view switch, because what a crash left behind is true of the whole app. */}
       <RecoveryBanner />
 
+      <NavTabs
+        active={view}
+        onChange={setView}
+        trailing={
+          snapshot?.run_id ? (
+            <span className="font-mono text-[10.5px] text-deck-faint">
+              run {snapshot.run_id}
+            </span>
+          ) : undefined
+        }
+      />
+
       {view === "team" ? (
         <div className="min-h-0 flex-1">
           <TeamView onOpenSession={openSession} />
@@ -96,7 +109,6 @@ function Deck() {
             // on an empty pane loses your place for no reason.
             setActive((cur) => (cur === id ? (sessions.find((s) => s !== id) ?? null) : cur));
           }}
-          onOpenTeam={() => setView("team")}
         />
       )}
 

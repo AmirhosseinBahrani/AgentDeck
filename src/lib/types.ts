@@ -105,6 +105,13 @@ export interface RunSnapshot {
   /** Whether the branches have been merged and tested together. */
   integrated: boolean;
   escalations: Escalation[];
+  /** Short run id for the header — enough to tell two runs apart, not the full uuid. */
+  run_id: string;
+  started_at_ms: number;
+  agents: AgentSummary[];
+  edges: GraphEdge[];
+  max_concurrent: number;
+  engaged: number;
   tasks: TaskSummary[];
   decisions: DecisionSummary[];
 }
@@ -170,4 +177,26 @@ export interface Escalation {
   detail: string;
   options: EscalationOption[];
   opened_at_iteration: number;
+}
+
+/** One member of the team, as the roster shows them. */
+export interface AgentSummary {
+  id: string;
+  name: string;
+  role: string;
+  /** running | blocked | idle */
+  status: string;
+  activity: string | null;
+  task_id: string | null;
+  session_id: string | null;
+  branch: string | null;
+  attempts: number;
+  review_rounds: number;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  /** "hard" blocks readiness; "soft" only orders the work. */
+  kind: string;
 }

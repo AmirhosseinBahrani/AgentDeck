@@ -7,6 +7,7 @@
 use crate::state::AppState;
 use deck_core::domain::event::EventEnvelope;
 use deck_core::domain::ids::{Seq, SessionId};
+use deck_core::domain::task::TaskStatus;
 use deck_core::ipc::{is_critical, Coalescer, EventBatch, FLUSH_INTERVAL};
 use tauri::ipc::Channel;
 use tauri::State;
@@ -318,6 +319,20 @@ pub async fn start_supervisor_run(
     // database. That only holds if the graph and the decision log reach disk, so they are
     // written after every iteration.
     let run_id = uuid::Uuid::new_v4().to_string();
+    let meta_for_snapshot = RunMeta {
+        // The same id the run is persisted under, shortened for display. Two ids for one run
+        // would make the header and the database disagree about which run you are looking at.
+        run_id: run_id.chars().take(4).collect(),
+        started_at_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or_default(),
+        team: config
+            .team
+            .iter()
+            .map(|m| (m.agent_id, m.role.clone()))
+            .collect(),
+    };
     let persist = crate::persistence::RunWriter::new(
         state.store.clone(),
         run_id,
@@ -337,7 +352,12 @@ pub async fn start_supervisor_run(
         // Published after each iteration rather than polled from the run: polling would let the
         // dashboard render a picture from mid-iteration, where tasks and phase disagree.
         let observe = move |run: &Run| {
-            let snapshot = snapshot_of(&objective_for_snapshot, autonomy_for_snapshot, run);
+            let snapshot = snapshot_of(
+                &objective_for_snapshot,
+                autonomy_for_snapshot,
+                run,
+                &meta_for_snapshot,
+            );
             // The tray is the only surface visible with the window closed, which is the normal
             // way a long run is watched.
             crate::background::update_tray(&app_handle, &snapshot);
@@ -642,6 +662,48 @@ pub struct RunSnapshot {
     pub escalations: Vec<deck_supervisor::escalation::Escalation>,
     pub tasks: Vec<TaskSummary>,
     pub decisions: Vec<DecisionSummary>,
+    /// Short run identifier, for the header. The full uuid is unreadable at a glance and the
+    /// operator only ever needs enough of it to tell two runs apart.
+    pub run_id: String,
+    pub started_at_ms: i64,
+    /// The team, as the roster shows it: who exists, what they are doing right now, and where.
+    pub agents: Vec<AgentSummary>,
+    /// Dependency edges, so the task graph can be drawn as the graph it already is rather than
+    /// flattened into a list.
+    pub edges: Vec<GraphEdge>,
+    /// How many agents may run at once, and how many are.
+    pub max_concurrent: usize,
+    pub engaged: usize,
+}
+
+/// One member of the team.
+#[derive(serde::Serialize, Clone)]
+pub struct AgentSummary {
+    pub id: String,
+    /// "Developer", "Reviewer" — derived from the role, since agents have no separate name yet.
+    pub name: String,
+    pub role: String,
+    /// running | blocked | idle — what the roster colours and sorts on.
+    pub status: String,
+    /// The task they are on, phrased as the activity it is.
+    pub activity: Option<String>,
+    pub task_id: Option<String>,
+    pub session_id: Option<String>,
+    /// The worktree branch their work lives on.
+    pub branch: Option<String>,
+    /// Attempts and review rounds for the current task, which is the only honest progress signal
+    /// available — nothing reports a percentage, and inventing one would misreport how far along
+    /// real work is.
+    pub attempts: u32,
+    pub review_rounds: u32,
+}
+
+#[derive(serde::Serialize, Clone)]
+pub struct GraphEdge {
+    pub from: String,
+    pub to: String,
+    /// "hard" blocks readiness; "soft" only orders the work.
+    pub kind: String,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -682,11 +744,37 @@ pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot,
     Ok(snapshot.unwrap_or_default())
 }
 
+/// Identity and team of the current run, which the graph itself does not carry.
+#[derive(Clone)]
+pub struct RunMeta {
+    pub run_id: String,
+    pub started_at_ms: i64,
+    pub team: Vec<(deck_core::domain::ids::AgentId, String)>,
+}
+
+/// A role rendered as the job it is. Agents have no separate name yet, and "developer" in a
+/// roster of people reads as a placeholder where "Developer" reads as a seat on the team.
+fn display_name(role: &str) -> String {
+    match role {
+        "developer" => "Developer".into(),
+        "reviewer" => "Reviewer".into(),
+        "supervisor" => "Supervisor".into(),
+        other => {
+            let mut c = other.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        }
+    }
+}
+
 /// Flattens a run into what the dashboard shows.
 fn snapshot_of(
     objective: &str,
     autonomy: deck_supervisor::autonomy::Autonomy,
     run: &deck_supervisor::driver::Run,
+    meta: &RunMeta,
 ) -> RunSnapshot {
     let tasks = run
         .graph
@@ -727,7 +815,66 @@ fn snapshot_of(
         })
         .collect();
 
+    // One row per team member rather than per task: the roster answers "who is working", and an
+    // agent between tasks still exists and still occupies a slot.
+    let agents: Vec<AgentSummary> = meta
+        .team
+        .iter()
+        .map(|(agent_id, role)| {
+            let current = run
+                .graph
+                .tasks()
+                .filter(|t| t.assignee == Some(*agent_id))
+                .find(|t| matches!(t.status, TaskStatus::Running | TaskStatus::Review))
+                .or_else(|| {
+                    run.graph
+                        .tasks()
+                        .find(|t| t.assignee == Some(*agent_id) && t.status == TaskStatus::Blocked)
+                });
+
+            let status = match current.map(|t| t.status) {
+                Some(TaskStatus::Running) | Some(TaskStatus::Review) => "running",
+                Some(TaskStatus::Blocked) => "blocked",
+                _ => "idle",
+            };
+
+            AgentSummary {
+                id: agent_id.to_string(),
+                name: display_name(role),
+                role: role.clone(),
+                status: status.to_string(),
+                activity: current.and_then(|t| run.titles.get(&t.id).cloned()),
+                task_id: current.map(|t| t.id.to_string()),
+                session_id: current
+                    .and_then(|t| run.sessions.get(&t.id))
+                    .map(|s| s.to_string()),
+                branch: current.and_then(|t| run.branches.get(&t.id).cloned()),
+                attempts: current.map(|t| t.attempts).unwrap_or(0),
+                review_rounds: current.map(|t| t.review_rounds).unwrap_or(0),
+            }
+        })
+        .collect();
+
+    let engaged = agents.iter().filter(|a| a.status == "running").count();
+
+    let edges = run
+        .graph
+        .edges()
+        .iter()
+        .map(|e| GraphEdge {
+            from: e.from.to_string(),
+            to: e.to.to_string(),
+            kind: format!("{:?}", e.kind).to_lowercase(),
+        })
+        .collect();
+
     RunSnapshot {
+        run_id: meta.run_id.clone(),
+        started_at_ms: meta.started_at_ms,
+        max_concurrent: meta.team.len(),
+        engaged,
+        agents,
+        edges,
         active: !matches!(
             run.state.phase,
             deck_supervisor::loop_engine::RunPhase::Completed

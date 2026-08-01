@@ -18,7 +18,7 @@
 pub mod integration;
 pub mod worktree;
 
-pub use integration::{Contribution, IntegrationOutcome};
+pub use integration::{head_sha, Contribution, IntegrationOutcome, LandOutcome};
 pub use worktree::{WorktreeManager, WorktreeSpec, WorktreeStatus};
 
 use std::collections::HashMap;

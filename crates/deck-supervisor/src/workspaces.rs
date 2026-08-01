@@ -72,6 +72,13 @@ pub trait Workspaces: Send + Sync {
         test_command: Option<&str>,
         timeout: std::time::Duration,
     ) -> IntegrationOutcome;
+
+    /// Moves a successful integration onto the branch the operator has checked out.
+    ///
+    /// Called only after the gate is satisfied. Until this exists, a finished run leaves the
+    /// project directory exactly as it started — every deliverable on a task branch and nothing
+    /// where anyone would look for it.
+    async fn land(&self) -> deck_core::git::LandOutcome;
 }
 
 /// Renders the brief a worker receives.
@@ -127,6 +134,8 @@ pub struct FakeWorkspaces {
     /// What the next integration should return. Scripted, because a fake has no branches to
     /// merge and the driver's behaviour on each outcome is the thing under test.
     integration: parking_lot::Mutex<Option<IntegrationOutcome>>,
+    /// Whether the run reached the point of putting its work on the project's branch.
+    landed: parking_lot::Mutex<bool>,
     /// Tasks whose agent a test has declared dead.
     dead: parking_lot::Mutex<Vec<TaskId>>,
 }
@@ -141,6 +150,7 @@ impl FakeWorkspaces {
             worktrees: parking_lot::Mutex::new(Default::default()),
             fail_next: parking_lot::Mutex::new(false),
             integration: parking_lot::Mutex::new(None),
+            landed: parking_lot::Mutex::new(false),
             dead: parking_lot::Mutex::new(Vec::new()),
         }
     }
@@ -148,6 +158,10 @@ impl FakeWorkspaces {
     /// Simulates an agent dying without reporting anything.
     pub fn kill_agent(&self, task_id: TaskId) {
         self.dead.lock().push(task_id);
+    }
+
+    pub fn has_landed(&self) -> bool {
+        *self.landed.lock()
     }
 
     pub fn set_integration(&self, outcome: IntegrationOutcome) {
@@ -212,6 +226,14 @@ impl Workspaces for FakeWorkspaces {
             return Some(false);
         }
         self.worktrees.lock().contains_key(&task_id).then_some(true)
+    }
+
+    async fn land(&self) -> deck_core::git::LandOutcome {
+        *self.landed.lock() = true;
+        deck_core::git::LandOutcome::Landed {
+            branch: "main".into(),
+            commit: "0000000".into(),
+        }
     }
 
     async fn integrate(

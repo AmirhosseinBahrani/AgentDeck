@@ -13,6 +13,7 @@ import { DiffsView } from "./features/views/DiffsView";
 import { SupervisorView } from "./features/views/SupervisorView";
 import { TaskGraphView } from "./features/views/TaskGraphView";
 import { AdvancedView } from "./features/views/AdvancedView";
+import { FilesView } from "./features/views/FilesView";
 import { MemoryView } from "./features/views/MemoryView";
 import { SkillsView } from "./features/views/SkillsView";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
@@ -148,6 +149,12 @@ function Deck() {
       {view === "supervisor" && (
         <div className="min-h-0 flex-1">
           <SupervisorView snapshot={snapshot} />
+        </div>
+      )}
+
+      {view === "files" && (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <FilesView project={project?.name ?? null} />
         </div>
       )}
 

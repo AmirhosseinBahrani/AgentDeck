@@ -175,6 +175,70 @@ impl WorktreeManager {
     ///
     /// Includes uncommitted work. An agent mid-task has usually not committed, and a diff view
     /// that showed nothing until it did would be blank exactly when someone is checking on it.
+    /// The actual patch for one agent's work — everything since it branched, committed or not.
+    ///
+    /// Separate from [`numstat`], which answers "what was touched". A count of changed lines tells
+    /// an operator that something happened; reviewing whether it was the right thing needs the
+    /// text. Capped, because a generated lockfile or a vendored dependency can run to megabytes
+    /// and would be pushed straight into the webview.
+    pub async fn patch(
+        &self,
+        repo: &Path,
+        info: &WorktreeInfo,
+        max_bytes: usize,
+    ) -> Result<String> {
+        let root = repo_root(repo).await?;
+        let lock = self.locks.for_repo(&root);
+        let _guard = lock.lock().await;
+
+        let committed = git(&info.path, &["diff", &format!("{}...HEAD", info.base_sha)])
+            .await
+            .unwrap_or_default();
+
+        let uncommitted = git(&info.path, &["diff", "HEAD"]).await.unwrap_or_default();
+
+        // Untracked files are the common case for an agent that creates a new file and has not
+        // committed yet — omitting them would show an empty diff for work that plainly exists.
+        let untracked = git(&info.path, &["ls-files", "--others", "--exclude-standard"])
+            .await
+            .unwrap_or_default();
+
+        let mut out = String::new();
+        for section in [committed, uncommitted] {
+            if !section.trim().is_empty() {
+                out.push_str(&section);
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+        }
+
+        for path in untracked.lines().filter(|l| !l.trim().is_empty()) {
+            // `--no-index` against /dev/null renders a new file as a normal patch, so the reader
+            // sees one consistent format rather than a list of names appended to a diff.
+            let rendered = git(&info.path, &["diff", "--no-index", "--", "/dev/null", path])
+                .await
+                .unwrap_or_default();
+            out.push_str(&rendered);
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+
+        if out.len() > max_bytes {
+            let cut = out
+                .char_indices()
+                .take_while(|(i, _)| *i < max_bytes)
+                .last()
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0);
+            out.truncate(cut);
+            out.push_str("\n… diff truncated. Open the worktree to read the rest.\n");
+        }
+
+        Ok(out)
+    }
+
     pub async fn numstat(&self, repo: &Path, info: &WorktreeInfo) -> Result<Vec<FileDiff>> {
         let root = repo_root(repo).await?;
         let lock = self.locks.for_repo(&root);

@@ -217,3 +217,118 @@ pub async fn discard_integration(repo: &Path) -> Result<()> {
             other => other,
         })
 }
+
+/// What happened when the integrated result was moved onto the project's own branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LandOutcome {
+    /// The branch now points at the integrated commit, and the files are in the working tree.
+    Landed { branch: String, commit: String },
+    /// Deliberately not done. Never a failure of the work — a reason the operator must resolve.
+    Refused { reason: String },
+}
+
+impl WorktreeManager {
+    /// Moves a successful integration onto the branch the operator actually has checked out.
+    ///
+    /// Without this a finished run left the project directory exactly as it started: every
+    /// deliverable existed, but only on task branches and inside a scratch worktree, so the
+    /// obvious reading was that the agents had produced nothing. Integration proving the branches
+    /// merge and pass is precisely the point at which the result has earned a place on the branch.
+    ///
+    /// Refuses rather than forces, in every case where landing could destroy something:
+    ///
+    /// - the working tree has uncommitted changes — they would be overwritten by the checkout
+    /// - the branch has moved since integration started — a fast-forward would be a rewrite, and
+    ///   the integration was never tested against whatever arrived in the meantime
+    /// - the branch is checked out in another worktree, where updating it would surprise whoever
+    ///   is using it
+    ///
+    /// Every refusal leaves the integration worktree intact, so nothing is lost and the operator
+    /// can merge by hand.
+    pub async fn land(
+        &self,
+        repo: &Path,
+        base_ref: &str,
+        expected_base_sha: &str,
+    ) -> Result<LandOutcome> {
+        let root = repo_root(repo).await?;
+        let lock = self.locks_for(&root);
+        let _guard = lock.lock().await;
+
+        let path = integration_path(&root);
+        if !path.is_dir() {
+            return Ok(LandOutcome::Refused {
+                reason: "there is no integration worktree to land".into(),
+            });
+        }
+
+        let integrated = git(&path, &["rev-parse", "HEAD"]).await?.trim().to_string();
+
+        // Read from the repository rather than assumed: the operator may have committed while the
+        // run was going, and the integration was not tested against that.
+        let current = git(&root, &["rev-parse", base_ref])
+            .await?
+            .trim()
+            .to_string();
+        if current != expected_base_sha {
+            return Ok(LandOutcome::Refused {
+                reason: format!(
+                    "{base_ref} moved while the run was going (expected {}, found {}); \
+                     merge the integration worktree by hand",
+                    &expected_base_sha[..expected_base_sha.len().min(8)],
+                    &current[..current.len().min(8)]
+                ),
+            });
+        }
+
+        // Our own worktrees are filtered out by path rather than trusted to be excluded. They
+        // live under `.agentdeck`, which is normally in `.git/info/exclude` — but that entry is
+        // written when the first agent worktree is created, and a refusal to land is far too
+        // consequential to rest on something written elsewhere for another reason.
+        let status = git(&root, &["status", "--porcelain"]).await?;
+        let dirty: Vec<&str> = status
+            .lines()
+            .filter(|line| {
+                let path = line.get(3..).unwrap_or("").trim_matches('"');
+                !path.starts_with(".agentdeck/") && path != ".agentdeck"
+            })
+            .collect();
+
+        if !dirty.is_empty() {
+            return Ok(LandOutcome::Refused {
+                reason: "you have uncommitted changes; commit or stash them and land by hand"
+                    .into(),
+            });
+        }
+
+        let head = git(&root, &["symbolic-ref", "--quiet", "--short", "HEAD"])
+            .await
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+
+        if head == base_ref {
+            // Fast-forward the checked-out branch, which also updates the files on disk. `merge
+            // --ff-only` rather than `reset --hard`: it refuses instead of discarding if the
+            // relationship is not what we believe it is.
+            git(&root, &["merge", "--ff-only", &integrated]).await?;
+        } else {
+            // Not checked out here. Updating the ref is enough and touches no working tree.
+            git(&root, &["branch", "--force", base_ref, &integrated]).await?;
+        }
+
+        Ok(LandOutcome::Landed {
+            branch: base_ref.to_string(),
+            commit: integrated,
+        })
+    }
+}
+
+/// The commit a ref currently points at.
+pub async fn head_sha(repo: &Path, git_ref: &str) -> Result<String> {
+    let root = repo_root(repo).await?;
+    Ok(git(&root, &["rev-parse", git_ref])
+        .await?
+        .trim()
+        .to_string())
+}

@@ -20,6 +20,7 @@ export type NavTab =
   | "supervisor"
   | "memory"
   | "skills"
+  | "files"
   | "advanced";
 
 const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
@@ -27,6 +28,7 @@ const TABS: { id: NavTab; label: string; ready: boolean; why?: string }[] = [
   { id: "workspace", label: "Sessions", ready: true },
   { id: "graph", label: "Task graph", ready: true },
   { id: "diffs", label: "Diffs", ready: true },
+  { id: "files", label: "Files", ready: true },
   { id: "decisions", label: "Decisions", ready: true },
   { id: "supervisor", label: "Supervisor", ready: true },
   { id: "memory", label: "Memory", ready: true },

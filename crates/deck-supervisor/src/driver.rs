@@ -447,6 +447,37 @@ impl<'a> Driver<'a> {
     }
 
     // -----------------------------------------------------------------------
+    /// Puts the integrated work on the operator's own branch, and says so either way.
+    ///
+    /// A refusal is logged rather than escalated. Nothing is lost — every branch and the
+    /// integration worktree survive — and the run's work is done; what remains is a merge the
+    /// operator has to make themselves because only they can resolve why it was refused.
+    async fn land_result(&self, run: &mut Run) {
+        match self.workspaces.land().await {
+            deck_core::git::LandOutcome::Landed { branch, commit } => {
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "land",
+                    "landed",
+                    &format!(
+                        "the integrated work is on {branch} at {}",
+                        &commit[..commit.len().min(8)]
+                    ),
+                );
+            }
+            deck_core::git::LandOutcome::Refused { reason } => {
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::CompletionCheck,
+                    "land",
+                    "refused",
+                    &format!("left for you to merge: {reason}"),
+                );
+            }
+        }
+    }
+
     // Completion check — the integration gate. Pure code; no model is consulted
     // -----------------------------------------------------------------------
 
@@ -502,6 +533,7 @@ impl<'a> Driver<'a> {
                         merged.len()
                     ),
                 );
+                self.land_result(run).await;
             }
 
             // Lets the run finish, because refusing would strand every project whose toolchain

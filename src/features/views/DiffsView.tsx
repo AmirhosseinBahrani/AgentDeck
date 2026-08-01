@@ -135,6 +135,8 @@ export function DiffsView() {
                         </span>
                       </div>
                     ))}
+
+                    <Patch taskId={diff.task_id} />
                   </div>
                 )}
               </div>
@@ -144,6 +146,69 @@ export function DiffsView() {
       )}
     </div>
   );
+}
+
+/**
+ * The patch itself, not just what it touched.
+ *
+ * Line counts say something changed; only the text says whether it was the right change, and
+ * checking that was previously impossible without leaving the app for the worktree. Loaded when
+ * the row is opened rather than with the list — a `git diff` per worktree on every render is a
+ * real cost for a tab that is usually closed.
+ */
+function Patch({ taskId }: { taskId: string }) {
+  const [patch, setPatch] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void invoke<string>("get_task_patch", { taskId })
+      .then((text) => {
+        if (!cancelled) setPatch(text);
+      })
+      .catch(() => {
+        if (!cancelled) setPatch("");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [taskId]);
+
+  if (patch === null) {
+    return <p className="mt-2 text-[11px] text-deck-faint">Reading the worktree…</p>;
+  }
+  if (!patch.trim()) {
+    return (
+      <p className="mt-2 text-[11px] text-deck-faint">
+        Nothing to show — the files are listed above but produced no textual diff (binary, or
+        renamed only).
+      </p>
+    );
+  }
+
+  return (
+    <pre className="mt-2 max-h-[460px] overflow-auto rounded-md border border-white/[0.06] bg-black/25 p-3 font-mono text-[11px] leading-[17px]">
+      {patch.split("\n").map((line, i) => (
+        <div key={i} className={lineTone(line)}>
+          {line || " "}
+        </div>
+      ))}
+    </pre>
+  );
+}
+
+/**
+ * Colours a unified-diff line.
+ *
+ * `+++`/`---` are checked before `+`/`-` — they are file headers, not an added and a removed
+ * line, and colouring them green and red makes every file look like a rewrite.
+ */
+function lineTone(line: string): string {
+  if (line.startsWith("+++") || line.startsWith("---")) return "text-deck-faint";
+  if (line.startsWith("@@")) return "text-deck-live";
+  if (line.startsWith("diff ") || line.startsWith("index ")) return "text-deck-faint";
+  if (line.startsWith("+")) return "text-deck-done";
+  if (line.startsWith("-")) return "text-deck-danger";
+  return "text-deck-dim";
 }
 
 function share(part: number, total: number): number {

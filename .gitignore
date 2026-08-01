@@ -33,3 +33,6 @@ target/
 *.njsproj
 *.sln
 *.sw?
+
+# Staged sidecars, rebuilt from source by scripts/build-sidecar.mjs
+src-tauri/binaries/

@@ -129,7 +129,7 @@ export interface ResumableSummary {
 
 /** Whether the `claude` CLI is installed and logged in. Not an AgentDeck account — there is none. */
 export type Readiness =
-  | { state: "ready"; version: string; auth: AuthInfo }
+  | { state: "ready"; version: string; auth: AuthInfo; path: string }
   | { state: "not_installed"; program: string }
   | { state: "not_authenticated"; version: string }
   | { state: "unknown"; detail: string };

@@ -339,6 +339,9 @@ pub async fn start_supervisor_run(
     let answers = state.pending_answers.clone();
     answers.lock().clear();
     let answer_queue = crate::supervision::GivenAnswers(answers);
+    let guidance = state.pending_guidance.clone();
+    guidance.lock().clear();
+    let guidance_queue = crate::supervision::GivenGuidance(guidance);
     let app_handle = app.clone();
 
     // The supervisor has no long-lived model session on purpose: its memory is meant to *be* the
@@ -386,7 +389,8 @@ pub async fn start_supervisor_run(
         let driver = Driver::new(&config, &planner, workspaces.as_ref())
             .with_reports(&report_queue)
             .with_approvals(&approval_queue)
-            .with_answers(&answer_queue);
+            .with_answers(&answer_queue)
+            .with_guidance(&guidance_queue);
         let mut run = Run::new();
 
         // Published after each iteration rather than polled from the run: polling would let the
@@ -539,6 +543,80 @@ pub async fn answer_escalation(
 
     // Wake the loop so the run resumes now. It is parked rather than finished, and without this
     // it would sit until the next tick wondering why nothing had changed.
+    if let Some(triggers) = state.run_triggers.lock().await.as_ref() {
+        let _ = triggers.try_send(deck_supervisor::loop_engine::Trigger::HumanAnswered);
+    }
+    Ok(())
+}
+
+/// Runs this project has had before, newest first.
+///
+/// A run cannot literally be resumed — its agents exited and its loop is gone — so history
+/// offers the objective back rather than pretending otherwise. Picking one refills the start
+/// screen; the previous attempt's tasks, decisions and cost stay readable beside it.
+#[tauri::command]
+pub async fn list_runs(state: State<'_, AppState>) -> Result<Vec<PastRunSummary>, String> {
+    Ok(
+        deck_core::store::runs::recent(&state.store, &state.identity.project_id, 20)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|run| PastRunSummary {
+                run_id: run.run_id,
+                objective: run.objective,
+                status: run.status,
+                autonomy: run.autonomy,
+                iteration: run.iteration,
+                spent_usd: run.spent_usd,
+                task_count: run.task_count,
+                decision_count: run.decision_count,
+            })
+            .collect(),
+    )
+}
+
+/// Tells the supervisor how you want the work shaped.
+///
+/// Not a message in a conversation — the supervisor has none, deliberately, so that no state
+/// accumulates in a prompt across a run and every decision stays a replayable one-shot call.
+/// The note is stored, recorded in the log as a decision you made, and folded into the
+/// code-assembled prompt the next time it plans or assigns.
+///
+/// That distinction is also what makes a free-text box safe here. Guidance changes how work is
+/// *shaped* — smaller tasks, a preferred test command, who should own something. It cannot widen
+/// permissions, skip the verification gate, or mark work done, because none of those read the
+/// planner's prompt; they are enforced in code on the other side of it. "Skip the tests" reaches
+/// the model and changes nothing.
+#[tauri::command]
+pub async fn send_guidance(
+    state: State<'_, AppState>,
+    text: String,
+    replan: Option<bool>,
+) -> Result<(), String> {
+    if text.trim().is_empty() {
+        return Err("guidance cannot be empty".into());
+    }
+    if state.live_run.lock().await.is_none() {
+        return Err("There is no run to guide. Start one first.".into());
+    }
+
+    let iteration = state
+        .run_snapshot
+        .lock()
+        .as_ref()
+        .map(|s| s.iteration)
+        .unwrap_or(0);
+
+    state
+        .pending_guidance
+        .lock()
+        .push(deck_supervisor::guidance::Guidance::new(
+            text.trim(),
+            iteration,
+            replan.unwrap_or(false),
+        ));
+
+    // Wake the loop so it applies now rather than at the next tick.
     if let Some(triggers) = state.run_triggers.lock().await.as_ref() {
         let _ = triggers.try_send(deck_supervisor::loop_engine::Trigger::HumanAnswered);
     }
@@ -966,6 +1044,8 @@ pub struct RunSnapshot {
     pub integrated: bool,
     /// The questions the run needs answered, with the answers it will accept.
     pub escalations: Vec<deck_supervisor::escalation::Escalation>,
+    /// Standing instructions the operator has given this run.
+    pub guidance: Vec<deck_supervisor::guidance::Guidance>,
     pub tasks: Vec<TaskSummary>,
     pub decisions: Vec<DecisionSummary>,
     /// Short run identifier, for the header. The full uuid is unreadable at a glance and the
@@ -1180,6 +1260,7 @@ fn snapshot_of(
         autonomy: autonomy.as_str().to_string(),
         integrated: run.state.integrated,
         escalations: run.escalations.clone(),
+        guidance: run.guidance.clone(),
         phase: format!("{:?}", run.state.phase).to_lowercase(),
         iteration: run.state.iteration,
         spent_usd: run.state.spent_usd,

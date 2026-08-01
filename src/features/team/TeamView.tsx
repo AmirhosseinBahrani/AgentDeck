@@ -1,10 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Play, Square, UserPlus } from "lucide-react";
+import { History, Play, RotateCcw, Square, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { SectionRule } from "../../components/ui/section-rule";
-import type { Autonomy, EscalationAnswer, RunSnapshot } from "../../lib/types";
+import type {
+  Autonomy,
+  EscalationAnswer,
+  PastRunSummary,
+  RunSnapshot,
+} from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { AgentRoster } from "./AgentRoster";
 import { AutonomyPicker } from "./AutonomyPicker";
@@ -499,7 +504,66 @@ function StartScreen({
         </div>
 
         {error && <div className="mt-3 text-[11px] text-deck-danger">{error}</div>}
+
+        <RunHistory onReuse={onObjectiveChange} />
       </form>
     </div>
+  );
+}
+
+/**
+ * What this project has been asked to do before.
+ *
+ * A run cannot literally be resumed — its agents exited with the app and its loop is gone — so
+ * this offers the objective back rather than pretending otherwise. That is the useful part
+ * anyway: picking up after closing the app almost always means running the same thing again,
+ * and retyping it from memory loses the wording the plan was built from.
+ */
+function RunHistory({ onReuse }: { onReuse: (objective: string) => void }) {
+  const [runs, setRuns] = useState<PastRunSummary[]>([]);
+
+  useEffect(() => {
+    void invoke<PastRunSummary[]>("list_runs")
+      .then(setRuns)
+      .catch(() => {});
+  }, []);
+
+  if (runs.length === 0) return null;
+
+  return (
+    <section className="mt-8 flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <History className="size-3.5 text-deck-faint" />
+        <span className="label-micro">Earlier runs</span>
+      </div>
+      <div className="flex flex-col gap-1">
+        {runs.slice(0, 5).map((run) => (
+          <button
+            key={run.run_id}
+            type="button"
+            onClick={() => onReuse(run.objective)}
+            className="card-row group flex items-center gap-3 px-3 py-2 text-left"
+          >
+            <span
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                run.status === "completed" && "bg-deck-done",
+                run.status === "cancelled" && "bg-deck-faint",
+                run.status === "failed" && "bg-deck-danger",
+                !["completed", "cancelled", "failed"].includes(run.status) &&
+                  "bg-deck-attention",
+              )}
+            />
+            <span className="min-w-0 grow truncate text-[12.5px] text-deck-dim">
+              {run.objective}
+            </span>
+            <span className="shrink-0 font-mono text-[10px] text-deck-faint">
+              {run.status} · {run.task_count} tasks · ${run.spent_usd.toFixed(2)}
+            </span>
+            <RotateCcw className="size-3 shrink-0 text-deck-faint opacity-0 transition-opacity group-hover:opacity-100" />
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }

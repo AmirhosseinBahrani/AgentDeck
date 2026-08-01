@@ -1,26 +1,45 @@
-import { Bot, Lock } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { Bot, RefreshCw, Send, User } from "lucide-react";
+import { useState } from "react";
+import { Button } from "../../components/ui/button";
 import { SectionRule } from "../../components/ui/section-rule";
 import type { RunSnapshot } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
 /**
- * The supervisor's reasoning, read as a thread.
+ * The supervisor's reasoning, and where you shape it.
  *
- * Read-only, and that is a design decision rather than an unfinished feature.
+ * Not a chat, despite the shape. The supervisor has no conversation — every decision is a
+ * one-shot schema-validated call with a code-assembled prompt, which is what keeps decisions
+ * replayable and stops state accumulating in a prompt across a run.
  *
- * The supervisor has no long-lived model session. Every decision is a one-shot call against a
- * schema with a code-assembled prompt, and its memory is the database — which is what makes
- * decisions replayable and stops an unconstrained prompt accumulating state across a run. A
- * message box wired into it would reintroduce exactly that, and would be a free-text channel
- * into the permission model, which is the reason escalations were made a typed enum in the
- * first place.
- *
- * So this renders what the supervisor decided and why. When it needs something from you it
- * asks, with the answers it will accept — on the Team view, where you can actually act.
+ * What you write is stored as a standing instruction and folded into the *next* planning or
+ * assignment prompt. That is what makes a free-text box safe here: guidance changes how work is
+ * shaped — smaller tasks, a preferred test command, who owns what — but cannot widen
+ * permissions, skip the verification gate, or mark anything done, because none of those read the
+ * planner's prompt. They are enforced in code on the other side of it.
  */
 export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const decisions = snapshot?.decisions ?? [];
   const escalations = snapshot?.escalations ?? [];
+  const guidance = snapshot?.guidance ?? [];
+  const running = !!snapshot?.active;
+
+  async function send(replan: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("send_guidance", { text, replan });
+      setText("");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col gap-4 overflow-y-auto px-7 py-5">
@@ -39,6 +58,15 @@ export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
           No run. The supervisor's reasoning appears here once one starts.
         </p>
       )}
+
+      {guidance.map((g) => (
+        <Turn key={g.id} tone="neutral" who="You" meta={`iteration ${g.given_at_iteration}`}>
+          <p className="text-[12.5px] leading-[18px] text-deck-text">{g.text}</p>
+          {g.replan && (
+            <p className="mt-1 text-[11px] text-deck-faint">Asked for the plan to be redone.</p>
+          )}
+        </Turn>
+      ))}
 
       {escalations.map((e) => (
         <Turn key={e.id} tone="attention" who="Asking you">
@@ -70,16 +98,52 @@ export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
         </Turn>
       ))}
 
-      {/* Where a composer would be. Saying why there isn't one beats leaving a gap that reads
-          as something unbuilt. */}
-      <div className="mt-2 flex shrink-0 items-start gap-2.5 rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.02] px-3.5 py-3">
-        <Lock className="mt-px size-3.5 shrink-0 text-deck-faint" />
-        <p className="text-[11.5px] leading-relaxed text-deck-faint">
-          You cannot message the supervisor. It has no ongoing conversation to join — every
-          decision is a separate call against a fixed schema, which is what keeps them replayable
-          and stops one long prompt drifting over a run. When it needs you it raises a decision
-          with the specific answers it will accept.
-        </p>
+      <div className="sticky bottom-0 mt-2 flex shrink-0 flex-col gap-2 rounded-[var(--radius-panel)] border border-white/[0.08] bg-deck-base/95 p-3 backdrop-blur-xl">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter sends, Shift+Enter breaks the line. Guidance is usually one sentence.
+            if (e.key === "Enter" && !e.shiftKey && text.trim() && !busy) {
+              e.preventDefault();
+              void send(false);
+            }
+          }}
+          rows={2}
+          disabled={!running}
+          placeholder={
+            running
+              ? "Break tasks down further · always run pytest, not unittest · give the reviewer the schema work"
+              : "Start a run before guiding it."
+          }
+          className="w-full resize-none rounded-md border border-white/10 bg-black/30 px-3 py-2 text-[12.5px] leading-relaxed text-deck-text placeholder:text-deck-faint focus:border-deck-live/50 focus:outline-none disabled:opacity-50"
+        />
+        <div className="flex items-center gap-2">
+          {/* Says where guidance reaches, next to the box. Somebody will type "skip the tests",
+              and it is better that they know beforehand that it will not do that. */}
+          <span className="grow text-[10.5px] leading-relaxed text-deck-faint">
+            Applied to the next planning and assignment decisions. It cannot grant permissions or
+            bypass the verification gate.
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!running || busy || !text.trim()}
+            onClick={() => void send(true)}
+            title="Store this and decompose the objective again from scratch"
+          >
+            <RefreshCw /> Send and replan
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!running || busy || !text.trim()}
+            onClick={() => void send(false)}
+          >
+            <Send /> Send
+          </Button>
+        </div>
+        {error && <p className="text-[11px] text-deck-danger">{error}</p>}
       </div>
     </div>
   );
@@ -107,7 +171,7 @@ function Turn({
           tone === "neutral" && "border-white/[0.08] bg-white/[0.04] text-deck-faint",
         )}
       >
-        <Bot className="size-3.5" />
+        {who === "You" ? <User className="size-3.5" /> : <Bot className="size-3.5" />}
       </span>
       <div className="min-w-0 grow">
         <div className="flex items-baseline gap-2">

@@ -53,8 +53,23 @@ pub struct ProposedTask {
     pub role: String,
     #[serde(default)]
     pub objective_gate: bool,
-    #[serde(default)]
+    /// Defaulted on *any* deserialization failure, not just absence.
+    ///
+    /// A contract the model shaped wrongly used to fail the whole response, so one bad field in
+    /// one task discarded an entire plan and escalated a run that was otherwise fine. The
+    /// contract is the one part of a task code can repair by itself — `validate_and_repair`
+    /// injects the project's test command when verification is missing — so falling back to an
+    /// empty contract loses far less than losing the plan, and the repair is recorded either way.
+    #[serde(default, deserialize_with = "contract_or_default")]
     pub contract: TaskContract,
+}
+
+fn contract_or_default<'de, D>(deserializer: D) -> Result<TaskContract, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(raw).unwrap_or_default())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -73,6 +88,63 @@ pub struct ProposedPlan {
 }
 
 /// JSON Schema handed to the CLI so the shape is enforced before we see it.
+/// The shape of a task contract, as the model must produce it.
+///
+/// Split out because `json!` hits its recursion limit if the whole plan is one literal — and
+/// because this is the part worth reading on its own: it is the difference between the CLI
+/// validating the contract and the CLI validating nothing.
+fn contract_schema() -> serde_json::Value {
+    let verification = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+            "type": { "type": "string", "enum": ["command", "files_exist", "judgment"] },
+            "cmd": { "type": "string" },
+            "cwd_rel": { "type": "string" },
+            "expect_exit_zero": { "type": "boolean" },
+            "globs": { "type": "array", "items": { "type": "string" } },
+            "rubric": { "type": "string" }
+        }
+    });
+
+    let criterion = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "verify"],
+        "properties": {
+            "id": { "type": "string" },
+            "text": { "type": "string" },
+            "verify": verification
+        }
+    });
+
+    let constraint = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+            "type": { "type": "string", "enum": ["paths_forbidden", "max_diff_lines", "textual"] },
+            "globs": { "type": "array", "items": { "type": "string" } },
+            "max": { "type": "integer" },
+            "text": { "type": "string" }
+        }
+    });
+
+    serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["acceptance_criteria", "definition_of_done"],
+        "properties": {
+            "version": { "type": "integer" },
+            "definition_of_done": { "type": "string" },
+            "deliverables": { "type": "array", "items": { "type": "string" } },
+            "constraints": { "type": "array", "items": constraint },
+            "acceptance_criteria": { "type": "array", "items": criterion }
+        }
+    })
+}
+
 pub fn plan_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
@@ -91,7 +163,7 @@ pub fn plan_schema() -> serde_json::Value {
                         "description": { "type": "string" },
                         "role": { "type": "string" },
                         "objective_gate": { "type": "boolean" },
-                        "contract": { "type": "object" }
+                        "contract": contract_schema()
                     }
                 }
             },

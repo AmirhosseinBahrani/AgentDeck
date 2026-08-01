@@ -7,7 +7,7 @@
 
 use super::{Store, StoreError};
 use crate::domain::ids::AgentId;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// The local workspace and the project the app is currently pointed at.
 #[derive(Debug, Clone)]
@@ -123,4 +123,54 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default()
+}
+
+/// Remembers which repository the operator chose.
+///
+/// Stored on the workspace rather than inferred from the process, because a `.app` opened from
+/// Finder has a working directory of `/` — the choice has to survive a launch that carries no
+/// context at all.
+pub async fn set_active_project(store: &Store, path: &Path) -> Result<(), StoreError> {
+    let settings = serde_json::json!({ "project_path": path.display().to_string() });
+    sqlx::query("UPDATE workspaces SET settings_json = ?1 WHERE id = ?2")
+        .bind(settings.to_string())
+        .bind(LOCAL_WORKSPACE_ID)
+        .execute(store.writer())
+        .await?;
+    Ok(())
+}
+
+/// The repository chosen last, if it is still a repository.
+///
+/// Re-validated on every read rather than trusted: a remembered path can be deleted, renamed, or
+/// stop being a git repo between launches, and handing agents a directory that no longer exists
+/// would fail far from the cause.
+pub async fn active_project(store: &Store) -> Result<Option<PathBuf>, StoreError> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT settings_json FROM workspaces WHERE id = ?1")
+            .bind(LOCAL_WORKSPACE_ID)
+            .fetch_optional(store.reader())
+            .await?;
+
+    let Some((settings,)) = row else {
+        return Ok(None);
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&settings).unwrap_or_default();
+    let Some(raw) = parsed.get("project_path").and_then(|p| p.as_str()) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(raw);
+    Ok(is_repository(&path).then_some(path))
+}
+
+/// Whether a directory is inside a git repository, walking upward from it.
+pub fn is_repository(path: &Path) -> bool {
+    path.ancestors().any(|dir| dir.join(".git").exists())
+}
+
+/// The repository containing `path`, if any.
+pub fn repository_root(path: &Path) -> Option<PathBuf> {
+    path.ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .map(|dir| dir.to_path_buf())
 }

@@ -238,3 +238,9 @@ export interface RevokeImpact {
   assigned_tasks: string[];
   branch: string | null;
 }
+
+/** Which repository the app is working on. */
+export interface ProjectInfo {
+  path: string | null;
+  name: string | null;
+}

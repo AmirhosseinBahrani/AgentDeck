@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { FolderGit2, Search } from "lucide-react";
 import type { Autonomy } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
@@ -11,10 +11,14 @@ import { cn } from "../../lib/utils";
  */
 export function TitleBar({
   project,
+  projectPath,
+  onChangeProject,
   autonomy,
   running,
 }: {
   project: string;
+  projectPath?: string;
+  onChangeProject: () => void;
   autonomy: Autonomy;
   running: boolean;
 }) {
@@ -48,7 +52,16 @@ export function TitleBar({
 
       <div className="h-4 w-px shrink-0 bg-white/10" />
 
-      <span className="truncate font-mono text-[11px] text-deck-dim">{project}</span>
+      {/* The project, not the objective. This is the one piece of context that is true between
+          runs, and it doubles as the way to change it — there is nowhere else that would be. */}
+      <button
+        onClick={onChangeProject}
+        title={projectPath ?? "Choose a repository for agents to work in"}
+        className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-white/[0.06]"
+      >
+        <FolderGit2 className="size-3 shrink-0 text-deck-faint" />
+        <span className="truncate font-mono text-[11px] text-deck-dim">{project}</span>
+      </button>
 
       <div className="grow" />
 

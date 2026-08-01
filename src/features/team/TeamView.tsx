@@ -335,7 +335,9 @@ export function TeamView({
                 you.
               </p>
             ) : (
-              <div className="flex flex-col gap-3">
+              // Scrolls rather than grows. The rationale is model-written prose of no bounded
+              // length, and without this the list painted straight over the section beneath it.
+              <div className="flex min-h-0 grow flex-col gap-3 overflow-y-auto pr-1">
                 {snapshot.decisions.slice(0, 12).map((d, i) => (
                   <div key={i} className="flex gap-[11px]">
                     <span className="w-[34px] shrink-0 pt-0.5 font-mono text-[10px] text-deck-faint">
@@ -351,7 +353,10 @@ export function TeamView({
                         {d.kind.replace(/_/g, " ")}
                       </span>
                       {d.rationale && (
-                        <span className="text-[11.5px] leading-[17px] text-deck-faint">
+                        <span
+                          title={d.rationale}
+                          className="line-clamp-3 text-[11.5px] leading-[17px] break-words text-deck-faint"
+                        >
                           {d.rationale}
                         </span>
                       )}

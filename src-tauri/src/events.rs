@@ -207,6 +207,13 @@ pub async fn start_supervisor_run(
     use deck_supervisor::loop_engine::RunLimits;
     use deck_supervisor::run_loop::{forward_event, RunLoop};
 
+    // One run at a time. Nothing stopped a second Start from spawning another loop over the
+    // first, which would overwrite `live_run` and orphan the running agents — they would keep
+    // working, keep spending, and no longer be reachable by Stop or by a force kill.
+    if state.live_run.lock().await.is_some() {
+        return Err("A run is already going. Stop it before starting another.".into());
+    }
+
     // Refused rather than attempted. Without a repository there is nowhere to create worktrees
     // and nothing to verify against, and starting anyway would spend the rate limit producing
     // work with no home — the packaged app hits this whenever it is opened from Finder, which
@@ -333,6 +340,12 @@ pub async fn start_supervisor_run(
     let objective_for_snapshot = config.objective.clone();
     let autonomy_for_snapshot = config.autonomy;
 
+    // Cleared when the loop ends, so a run that finished on its own does not leave the app
+    // believing agents are still attached — Start would then refuse forever.
+    let ended_slot = state.run_snapshot.clone();
+    let ended_live = state.live_run.clone();
+    let ended_triggers = state.run_triggers.clone();
+
     let report_queue = crate::supervision::ClaimQueue(claims);
     let approvals = state.pending_approvals.clone();
     approvals.lock().clear();
@@ -424,6 +437,15 @@ pub async fn start_supervisor_run(
         // A run that finishes while the operator is elsewhere is the case this exists for: they
         // started it precisely so they could stop watching.
         crate::background::notify_run_ended(&app, &exit, run.state.spent_usd);
+
+        // Whatever the exit reason, the run is over. The observer covers the ordinary paths, but
+        // a snapshot that still claimed to be active would leave the dashboard with no way
+        // forward, so this is asserted rather than assumed.
+        if let Some(snapshot) = ended_slot.lock().as_mut() {
+            snapshot.active = false;
+        }
+        *ended_live.lock().await = None;
+        *ended_triggers.lock().await = None;
     });
 
     Ok(())
@@ -441,6 +463,14 @@ pub async fn cancel_supervisor_run(state: State<'_, AppState>) -> Result<usize, 
         let _ = triggers
             .send(deck_supervisor::loop_engine::Trigger::CancelRequested)
             .await;
+    }
+
+    // Marked here rather than left to the loop. The operator's click is what decides a run is
+    // over, and the UI refreshes as soon as this returns — reading a snapshot the loop had not
+    // caught up to yet showed the run still going for another poll interval.
+    if let Some(snapshot) = state.run_snapshot.lock().as_mut() {
+        snapshot.active = false;
+        snapshot.phase = "cancelled".into();
     }
 
     let live = state.live_run.lock().await.take();

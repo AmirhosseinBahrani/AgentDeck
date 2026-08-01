@@ -16,6 +16,13 @@ pub fn run() {
         )
         .init();
 
+    // Before anything spawns. A .app opened from Finder gets a bare PATH with no Homebrew, nvm
+    // or npm prefix on it, so `claude` — and the git and node it shells out to — would all be
+    // unfindable. Repairing it here means every later consumer reads the corrected value.
+    tauri::async_runtime::block_on(async {
+        deck_core::runtime::shell_path::ensure_tool_on_path("claude").await
+    });
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())

@@ -28,7 +28,13 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Readiness {
     /// Installed, logged in, and ready to run agents.
-    Ready { version: String, auth: AuthInfo },
+    Ready {
+        version: String,
+        auth: AuthInfo,
+        /// Where it was found. Worth showing: on a GUI launch this is the difference between
+        /// the CLI the operator expects and one on a PATH they cannot see.
+        path: String,
+    },
     /// The CLI is not on PATH. Nothing else can be determined.
     NotInstalled { program: String },
     /// Installed but nobody has logged in. Fixed outside AgentDeck, by the operator.
@@ -78,6 +84,16 @@ struct AuthStatus {
 
 /// Checks the CLI named `program`, the same name agents will be spawned with.
 pub async fn probe(program: &str) -> Readiness {
+    // Repairs PATH first if a GUI launch stripped it. Without this the probe would report a
+    // perfectly good install as missing, and agents would fail to spawn for the same reason.
+    let resolved = crate::runtime::shell_path::ensure_tool_on_path(program).await;
+    let Some(resolved) = resolved else {
+        return Readiness::NotInstalled {
+            program: program.to_string(),
+        };
+    };
+    let located = resolved.display().to_string();
+
     let version = match run(program, &["--version"]).await {
         Ok(out) if out.ok => out.stdout.trim().to_string(),
         // A non-zero `--version` is not a normal state for any working install.
@@ -129,6 +145,7 @@ pub async fn probe(program: &str) -> Readiness {
 
     Readiness::Ready {
         version,
+        path: located,
         auth: AuthInfo {
             method: parsed.auth_method,
             email: parsed.email,

@@ -5,11 +5,13 @@
 //! through `deck_core`'s transition table. The driver's own job is sequencing and I/O.
 
 use crate::autonomy::{ApprovalQueue, Autonomy, NoApprovals};
-use crate::contract::{run_gate, validate_and_repair, GateOutcome, TaskContract};
+use crate::contract::{
+    run_gate, validate_and_repair, Criterion, GateOutcome, TaskContract, Verification,
+};
 use crate::decision::*;
 use crate::escalation::{AnswerQueue, Escalation, EscalationAnswer, EscalationKind, NoAnswers};
 use crate::graph::{Edge, EdgeKind, Mutation, TaskGraph};
-use crate::guidance::{Guidance, GuidanceQueue, NoGuidance};
+use crate::guidance::{Guidance, GuidanceQueue, NoGuidance, NoTasks, RequestedTask, TaskQueue};
 use crate::loop_engine::*;
 use crate::planner::{Decisions, Planner};
 use crate::workspaces::{render_brief, DispatchRequest, NoReports, ReportQueue, Workspaces};
@@ -252,6 +254,7 @@ pub struct Driver<'a> {
     pub approvals: &'a dyn ApprovalQueue,
     pub answers: &'a dyn AnswerQueue,
     pub guidance: &'a dyn GuidanceQueue,
+    pub added_tasks: &'a dyn TaskQueue,
 }
 
 impl<'a> Driver<'a> {
@@ -268,6 +271,7 @@ impl<'a> Driver<'a> {
             approvals: &NoApprovals,
             answers: &NoAnswers,
             guidance: &NoGuidance,
+            added_tasks: &NoTasks,
         }
     }
 
@@ -293,6 +297,11 @@ impl<'a> Driver<'a> {
     /// Supplies standing instructions from the operator.
     pub fn with_guidance(mut self, guidance: &'a dyn GuidanceQueue) -> Self {
         self.guidance = guidance;
+        self
+    }
+
+    pub fn with_added_tasks(mut self, added_tasks: &'a dyn TaskQueue) -> Self {
+        self.added_tasks = added_tasks;
         self
     }
 
@@ -363,7 +372,10 @@ impl<'a> Driver<'a> {
             }
 
             match stage {
-                Stage::IngestReports => self.stage_ingest_reports(run),
+                Stage::IngestReports => {
+                    self.stage_add_requested(run);
+                    self.stage_ingest_reports(run);
+                }
                 Stage::Reap => {
                     self.stage_reap(run);
                     self.stage_unstick(run).await;
@@ -401,6 +413,70 @@ impl<'a> Driver<'a> {
     // -----------------------------------------------------------------------
     // Reap — pure: notices agents that died without saying anything
     // -----------------------------------------------------------------------
+
+    /// Folds operator-added tasks into the graph.
+    ///
+    /// Given the same treatment as a planned task and no more: the contract is repaired so it
+    /// carries an executable check, the graph validates it, and the verification gate will run
+    /// against it. Being asked for by a human is a reason for a task to exist, not a reason to
+    /// trust it.
+    fn stage_add_requested(&self, run: &mut Run) {
+        for requested in self.added_tasks.drain() {
+            let id = TaskId::new();
+            let mut contract = TaskContract {
+                definition_of_done: requested.description.clone(),
+                ..Default::default()
+            };
+            if !requested.verify_command.trim().is_empty() {
+                contract.acceptance_criteria.push(Criterion {
+                    id: "operator-check".into(),
+                    text: format!("`{}` succeeds", requested.verify_command.trim()),
+                    verify: Verification::Command {
+                        cmd: requested.verify_command.trim().to_string(),
+                        cwd_rel: None,
+                        expect_exit_zero: true,
+                    },
+                });
+            }
+            validate_and_repair(&mut contract, self.config.default_test_command.as_deref());
+
+            let state = TaskState {
+                id,
+                // Not an objective gate. The operator can add one at any point, and letting an
+                // afterthought decide whether the run may finish would be a surprising amount of
+                // power for a text box.
+                objective_gate: false,
+                ..TaskState::new(id)
+            };
+
+            if let Err(e) = run.graph.apply(Mutation {
+                add_tasks: vec![state],
+                add_edges: Vec::new(),
+            }) {
+                run.log.record_code_decision(
+                    run.state.iteration,
+                    Stage::Plan,
+                    "added_task_rejected",
+                    "graph_invariants",
+                    &e.to_string(),
+                );
+                continue;
+            }
+
+            run.contracts.insert(id, contract);
+            run.roles.insert(id, requested.role.clone());
+            run.titles.insert(id, requested.title.clone());
+            run.log.record_human_decision(
+                run.state.iteration,
+                Stage::Plan,
+                "task_added",
+                &format!(
+                    "you added \u{201c}{}\u{201d} for {}",
+                    requested.title, requested.role
+                ),
+            );
+        }
+    }
 
     /// Deals with an agent that is alive and has stopped doing anything.
     ///

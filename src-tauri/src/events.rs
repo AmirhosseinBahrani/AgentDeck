@@ -397,6 +397,9 @@ pub async fn start_supervisor_run(
     let approvals = state.pending_approvals.clone();
     approvals.lock().clear();
     let approval_queue = crate::supervision::GrantedApprovals(approvals);
+    let added = state.pending_tasks.clone();
+    added.lock().clear();
+    let added_queue = crate::supervision::AddedTasks(added);
     let answers = state.pending_answers.clone();
     answers.lock().clear();
     let answer_queue = crate::supervision::GivenAnswers(answers);
@@ -452,7 +455,8 @@ pub async fn start_supervisor_run(
             .with_reports(&report_queue)
             .with_approvals(&approval_queue)
             .with_answers(&answer_queue)
-            .with_guidance(&guidance_queue);
+            .with_guidance(&guidance_queue)
+            .with_added_tasks(&added_queue);
         let mut run = Run::new();
 
         // Published after each iteration rather than polled from the run: polling would let the
@@ -1956,6 +1960,45 @@ mod tests {
         assert_eq!(slug_for_directory("!!!"), "");
         assert_eq!(slug_for_directory(""), "");
     }
+}
+
+/// Adds a task to a run that is already going.
+///
+/// The situation this answers: a reviewer finds a real defect whose fix belongs to a task that is
+/// already complete. Retrying the review cannot help — nothing it does changes the artifact it is
+/// judging — and the escalation's options are retry, abandon, or end the run, all of which are
+/// wrong. What is needed is one more small piece of work.
+///
+/// The task is treated exactly like a planned one: its contract is repaired to carry an
+/// executable check, the graph validates it, and the verification gate runs against it. Being
+/// asked for by a human is a reason for a task to exist, not a reason to trust it.
+#[tauri::command]
+pub async fn add_task(
+    state: State<'_, AppState>,
+    title: String,
+    role: String,
+    description: String,
+    verify_command: Option<String>,
+) -> Result<(), String> {
+    if title.trim().is_empty() || role.trim().is_empty() {
+        return Err("A task needs a title and a role.".into());
+    }
+    if state.live_run.lock().await.is_none() {
+        return Err(
+            "No run is going. Start one and describe this as part of the objective.".into(),
+        );
+    }
+
+    state
+        .pending_tasks
+        .lock()
+        .push(deck_supervisor::guidance::RequestedTask {
+            title: title.trim().to_string(),
+            role: role.trim().to_lowercase(),
+            description: description.trim().to_string(),
+            verify_command: verify_command.unwrap_or_default(),
+        });
+    Ok(())
 }
 
 /// Puts the current integration onto the project's branch, on the operator's say-so.

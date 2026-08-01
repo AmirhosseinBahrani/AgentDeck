@@ -827,3 +827,71 @@ async fn an_agent_that_finishes_without_claiming_is_nudged_then_failed() {
         "prolonged silence must end the attempt rather than leaving it Running forever"
     );
 }
+
+/// Tasks a test hands to the driver, as an operator would.
+#[derive(Default)]
+struct Added(parking_lot::Mutex<Vec<deck_supervisor::guidance::RequestedTask>>);
+
+impl deck_supervisor::guidance::TaskQueue for Added {
+    fn drain(&self) -> Vec<deck_supervisor::guidance::RequestedTask> {
+        std::mem::take(&mut *self.0.lock())
+    }
+}
+
+#[tokio::test]
+async fn a_task_added_mid_run_is_planned_dispatched_and_verified_like_any_other() {
+    // The case: a reviewer finds a real defect whose fix belongs to a task that is already
+    // complete. Retrying the review cannot help — nothing it does changes the artifact it judges
+    // — and retry/abandon/end-the-run are all the wrong answer. One more small task is the right
+    // one, and there was no way to ask for it without restarting the run.
+    let root = workdir("added-task");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(one_task_plan("true"), 0.10);
+    let workspaces = FakeWorkspaces::new(root);
+    let added = Added::default();
+
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_added_tasks(&added);
+    let mut run = Run::new();
+    driver.step(&mut run, true).await;
+    let planned = run.graph.tasks().count();
+
+    added
+        .0
+        .lock()
+        .push(deck_supervisor::guidance::RequestedTask {
+            title: "Correct the README command".into(),
+            role: "developer".into(),
+            description: "python is not on PATH; the README should say python3".into(),
+            verify_command: "true".into(),
+        });
+
+    driver.step(&mut run, true).await;
+
+    assert_eq!(
+        run.graph.tasks().count(),
+        planned + 1,
+        "the task joined the graph"
+    );
+    let added_id = run
+        .titles
+        .iter()
+        .find(|(_, title)| title.as_str() == "Correct the README command")
+        .map(|(id, _)| *id)
+        .expect("titled like the operator asked");
+
+    assert_eq!(
+        run.roles.get(&added_id).map(String::as_str),
+        Some("developer")
+    );
+    assert!(
+        run.contracts
+            .get(&added_id)
+            .is_some_and(|c| c.has_executable_criterion()),
+        "asked for by a human is a reason to exist, not a reason to skip the gate"
+    );
+    assert!(
+        !run.graph.get(added_id).unwrap().objective_gate,
+        "an afterthought must not decide whether the run may finish"
+    );
+}

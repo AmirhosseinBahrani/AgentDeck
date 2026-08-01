@@ -100,3 +100,44 @@ mod tests {
         assert!(rendered.contains("prefer small tasks"));
     }
 }
+
+/// A task the operator added to a run that is already going.
+///
+/// The case this exists for: a reviewer finds a real defect whose fix belongs to a *different*
+/// task — one that is already complete. Retrying the review cannot help, because nothing it can
+/// do will change the artifact it is judging, and the escalation's own options (retry, abandon,
+/// end the run) are all wrong. What is needed is a new, small piece of work, and there was no way
+/// to ask for one without stopping the run and starting over.
+///
+/// Deliberately not an escalation answer. Those are a typed enum precisely so free text cannot
+/// reach the permission model, and a title and a command are free text. This arrives on its own
+/// path, is validated by the graph like any other task, and is verified by the same gate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestedTask {
+    pub title: String,
+    /// Which role should own it. Matched against the roster exactly as a planned task is.
+    pub role: String,
+    /// What the agent is being asked to do.
+    pub description: String,
+    /// The command that proves it worked. Empty means the project's default is injected, exactly
+    /// as it would be for a task the planner produced without one.
+    pub verify_command: String,
+}
+
+/// Tasks added by the operator, waiting to be folded into the graph.
+///
+/// Drained by the driver rather than pushed into the run, for the same reason approvals and
+/// guidance are: a click lands whenever it lands, and mutating the graph mid-stage would change
+/// it underneath code already reading it.
+pub trait TaskQueue: Send + Sync {
+    fn drain(&self) -> Vec<RequestedTask>;
+}
+
+/// Adds nothing. Used by tests and by runs with no operator attached.
+pub struct NoTasks;
+
+impl TaskQueue for NoTasks {
+    fn drain(&self) -> Vec<RequestedTask> {
+        Vec::new()
+    }
+}

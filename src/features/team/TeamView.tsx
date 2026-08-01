@@ -10,6 +10,7 @@ import { AgentRoster } from "./AgentRoster";
 import { AutonomyPicker } from "./AutonomyPicker";
 import { EscalationInbox } from "./EscalationInbox";
 import { HireAgent } from "./HireAgent";
+import { ProjectSwitcher } from "./ProjectSwitcher";
 import { RevokeAgent } from "./RevokeAgent";
 import { TaskGraph } from "./TaskGraph";
 
@@ -23,7 +24,15 @@ const SUPERVISOR_LOOP = ["observe", "plan", "assign", "review", "escalate"] as c
  * entirely for the last of those, because a decision waiting on a human is the only thing on
  * screen that stops everything else.
  */
-export function TeamView({ onOpenSession }: { onOpenSession: (sessionId?: string) => void }) {
+export function TeamView({
+  onOpenSession,
+  projectPath,
+  onProjectChanged,
+}: {
+  onOpenSession: (sessionId?: string) => void;
+  projectPath: string | null;
+  onProjectChanged: () => void;
+}) {
   const [objective, setObjective] = useState("");
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -207,6 +216,15 @@ export function TeamView({ onOpenSession }: { onOpenSession: (sessionId?: string
 
       <div className="flex min-h-0 grow gap-[26px] px-7 pt-[18px] pb-[26px]">
         <div className="flex min-w-0 grow flex-col gap-[22px] overflow-y-auto">
+          <ProjectSwitcher
+            activePath={projectPath}
+            onSwitched={() => {
+              onProjectChanged();
+              void refresh();
+            }}
+            runActive={running}
+          />
+
           <section className="flex flex-col gap-1.5">
             <SectionRule
               label="Team"

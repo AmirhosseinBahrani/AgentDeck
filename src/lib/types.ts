@@ -244,3 +244,21 @@ export interface ProjectInfo {
   path: string | null;
   name: string | null;
 }
+
+/** A repository registered in this workspace. */
+export interface ProjectRow {
+  id: string;
+  name: string;
+  path: string;
+  /** False once the directory has been moved or deleted. */
+  exists: boolean;
+}
+
+/** What a folder is, before committing to using it. */
+export interface FolderInfo {
+  path: string;
+  name: string;
+  is_repository: boolean;
+  /** False for a repository with no commits, which cannot host a worktree yet. */
+  has_commits: boolean;
+}

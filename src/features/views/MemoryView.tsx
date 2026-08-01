@@ -34,6 +34,31 @@ export function MemoryView({ project }: { project: string | null }) {
 
   const dirty = content !== saved;
 
+  /** Brings in what the repository already documents, which agents otherwise cannot read. */
+  async function importFromRepo() {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const result = await invoke<{ memory_imported: boolean; skills_imported: number }>(
+        "import_project_knowledge",
+      );
+      const fresh = await invoke<string>("get_project_memory");
+      setContent(fresh);
+      setSaved(fresh);
+      setStatus(
+        result.memory_imported || result.skills_imported > 0
+          ? `Imported${result.memory_imported ? " CLAUDE.md" : ""}${
+              result.skills_imported > 0 ? ` and ${result.skills_imported} skill(s)` : ""
+            }. Skills are on the Skills tab.`
+          : "Nothing new to import — no CLAUDE.md or .claude/skills, or it is already here.",
+      );
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save() {
     setBusy(true);
     setStatus(null);
@@ -63,6 +88,15 @@ export function MemoryView({ project }: { project: string | null }) {
           {dirty && (
             <span className="font-mono text-[10.5px] text-deck-attention">unsaved</span>
           )}
+          <Button
+            variant="ghost"
+            size="md"
+            onClick={importFromRepo}
+            disabled={busy}
+            title="Read this repository's CLAUDE.md and .claude/skills"
+          >
+            Import from repo
+          </Button>
           <Button variant="primary" size="md" onClick={save} disabled={busy || !dirty}>
             Save
           </Button>

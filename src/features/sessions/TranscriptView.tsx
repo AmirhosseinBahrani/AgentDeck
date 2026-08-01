@@ -1,6 +1,6 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { usePartial, useTranscript } from "../../hooks/useEventPump";
+import { usePartial, useTranscript, useTranscriptBackfill } from "../../hooks/useEventPump";
 import type { TranscriptRow } from "../../lib/types";
 
 /**
@@ -12,6 +12,7 @@ import type { TranscriptRow } from "../../lib/types";
  * tail repaints.
  */
 export function TranscriptView({ sessionId }: { sessionId: string | null }) {
+  useTranscriptBackfill(sessionId);
   const rows = useTranscript(sessionId);
   const parentRef = useRef<HTMLDivElement>(null);
   const [pinned, setPinned] = useState(true);

@@ -83,7 +83,8 @@ const MODES: { id: Autonomy; label: string; description: string }[] = [
   {
     id: "assisted",
     label: "Assisted",
-    description: "Plans, assigns and retries on its own. You approve each agent before it starts.",
+    description:
+      "Plans, assigns, starts agents and retries on its own. You are interrupted only when something needs a decision — a permission request, a conflict, a blocker.",
   },
   {
     id: "autonomous",

@@ -153,6 +153,33 @@ class TranscriptStore {
     for (const id of touched) this.notifyRows(id);
   }
 
+  /**
+   * Fills a session's scrollback from the durable event log.
+   *
+   * The live pump only carries what has happened since the app started, so a session from an
+   * earlier run — or one whose events arrived before its tab was opened — had no rows at all and
+   * rendered as a blank pane. Merged by seq rather than appended: a live event can land between
+   * the caller reading the transcript and this running, and the same row twice is worse than the
+   * gap it would be papering over.
+   */
+  hydrate(sessionId: string, envelopes: EventEnvelope[]): void {
+    const s = this.session(sessionId);
+    const known = new Set(s.rows.map((r) => r.id));
+
+    const restored: TranscriptRow[] = [];
+    for (const envelope of envelopes) {
+      const row = toRow(envelope);
+      if (row && !known.has(row.id)) restored.push(row);
+    }
+    if (restored.length === 0) return;
+
+    s.rows = [...restored, ...s.rows]
+      .sort((a, b) => Number(a.id) - Number(b.id))
+      .slice(-MAX_ROWS);
+    s.version += 1;
+    this.notifyRows(sessionId);
+  }
+
   /** Buffers streaming text. Notifies only the tail listeners, never the row list. */
   appendPartial(sessionId: string, text: string): void {
     const s = this.session(sessionId);

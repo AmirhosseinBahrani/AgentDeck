@@ -95,3 +95,42 @@ async fn a_deleted_skill_stops_reaching_agents() {
         None
     );
 }
+
+#[test]
+fn a_repository_with_claude_md_and_skills_is_discovered() {
+    // The files a well-documented repository already has. Agents cannot read them — they spawn
+    // with `--setting-sources ''` — so finding them is the whole point of the import.
+    let dir = std::env::temp_dir().join(format!("deck-discover-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join(".claude/skills/migrations")).unwrap();
+
+    std::fs::write(dir.join("CLAUDE.md"), "Migrations are hand-written.\n").unwrap();
+    std::fs::write(
+        dir.join(".claude/skills/migrations/SKILL.md"),
+        "---\nname: writing-migrations\ndescription: when changing the schema\n---\n\nNumber them sequentially.\n",
+    )
+    .unwrap();
+
+    let found = knowledge::discover(&dir);
+    assert_eq!(
+        found.memory.as_deref(),
+        Some("Migrations are hand-written.")
+    );
+    assert_eq!(found.skills.len(), 1);
+    assert_eq!(found.skills[0].name, "writing-migrations");
+    assert_eq!(found.skills[0].description, "when changing the schema");
+    assert_eq!(found.skills[0].body, "Number them sequentially.");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_repository_with_nothing_documented_discovers_nothing() {
+    let dir = std::env::temp_dir().join(format!("deck-discover-empty-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    assert_eq!(knowledge::discover(&dir), knowledge::Discovered::default());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

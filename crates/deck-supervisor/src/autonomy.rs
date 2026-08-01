@@ -18,7 +18,8 @@ pub enum Autonomy {
     /// Plans and assigns, but starts nothing and retries nothing. Every dispatch waits for a
     /// human, and a failure comes straight back rather than being attempted again.
     Manual,
-    /// Plans, assigns and retries on its own, but a human approves each agent before it starts.
+    /// Plans, assigns, starts agents and retries on its own. The operator is interrupted only
+    /// when something genuinely needs them: a permission request, a merge conflict, a blocker.
     #[default]
     Assisted,
     /// Runs unattended. The operator is told what happened rather than asked first.
@@ -27,8 +28,14 @@ pub enum Autonomy {
 
 impl Autonomy {
     /// Whether starting an agent requires a human to say so first.
+    ///
+    /// Only Manual. Assisted used to gate every dispatch too, which meant the ordinary way to run
+    /// the app was to sit clicking Start agent once per task while the supervisor waited — the
+    /// approval carried no judgement, because the decision of whether a task should run at all was
+    /// already made when it was planned and assigned. What genuinely needs a human is a permission
+    /// request or a conflict, and those escalate on their own path regardless of mode.
     pub fn dispatch_needs_approval(self) -> bool {
-        !matches!(self, Autonomy::Autonomous)
+        matches!(self, Autonomy::Manual)
     }
 
     /// Whether a failed task may be attempted again without asking.

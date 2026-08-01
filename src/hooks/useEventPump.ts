@@ -120,6 +120,29 @@ export function useTranscript(sessionId: string | null): TranscriptRow[] {
   );
 }
 
+/**
+ * Restores a session's scrollback from the database the first time it is opened.
+ *
+ * Runs once per session id. The pump is a live feed and holds nothing from before the app
+ * started, so without this every transcript from an earlier run was an empty pane.
+ */
+export function useTranscriptBackfill(sessionId: string | null): void {
+  const done = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!sessionId || done.current.has(sessionId)) return;
+    done.current.add(sessionId);
+
+    void invoke<EventEnvelope[]>("get_session_transcript", { sessionId, limit: 2000 })
+      .then((events) => transcriptStore.hydrate(sessionId, events))
+      .catch(() => {
+        // Leaves the pane as the live feed has it. Retrying on a failed read would just repeat
+        // whatever made it fail.
+        done.current.delete(sessionId);
+      });
+  }, [sessionId]);
+}
+
 /** The streaming tail. Separate hook so committed rows do not re-render per token. */
 export function usePartial(sessionId: string | null): string {
   return useSyncExternalStore(

@@ -104,6 +104,102 @@ pub async fn delete_skill(store: &Store, skill_id: &str) -> Result<bool, StoreEr
     Ok(result.rows_affected() > 0)
 }
 
+/// What a repository already documents for Claude, found on disk.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Discovered {
+    /// The contents of `CLAUDE.md`, if there is one.
+    pub memory: Option<String>,
+    pub skills: Vec<Skill>,
+}
+
+/// Reads a repository's own `CLAUDE.md` and `.claude/skills`.
+///
+/// These files are the obvious place a team's conventions already live, and because agents run
+/// with `--setting-sources ''` they are the one thing a well-documented repository has that the
+/// workers cannot see. Offered as an import rather than read at spawn: silently obeying files
+/// that change under version control would make a run depend on a branch's contents in a way
+/// nothing in the app showed.
+pub fn discover(repo: &std::path::Path) -> Discovered {
+    let memory = ["CLAUDE.md", "AGENTS.md"]
+        .iter()
+        .find_map(|name| std::fs::read_to_string(repo.join(name)).ok())
+        .map(|c| c.trim().to_string())
+        .filter(|c| !c.is_empty());
+
+    let mut skills = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(repo.join(".claude/skills")) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            // Both layouts in the wild: `skills/<name>/SKILL.md` and a flat `skills/<name>.md`.
+            let file = if dir.is_dir() {
+                dir.join("SKILL.md")
+            } else if dir.extension().is_some_and(|e| e == "md") {
+                dir.clone()
+            } else {
+                continue;
+            };
+
+            let Ok(raw) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            let fallback = dir
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if let Some(skill) = parse_skill_file(&raw, &fallback) {
+                skills.push(skill);
+            }
+        }
+    }
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Discovered { memory, skills }
+}
+
+/// Pulls `name` and `description` out of YAML frontmatter, falling back to the file's own name.
+///
+/// Deliberately not a YAML parser. Only two scalar keys are read and anything else in the block
+/// is left alone, so a frontmatter feature we do not understand costs us those two fields rather
+/// than the whole skill.
+fn parse_skill_file(raw: &str, fallback_name: &str) -> Option<Skill> {
+    let mut name = fallback_name.to_string();
+    let mut description = String::new();
+    let mut body = raw.trim().to_string();
+
+    if let Some(rest) = raw.strip_prefix("---") {
+        if let Some(end) = rest.find("\n---") {
+            for line in rest[..end].lines() {
+                let Some((key, value)) = line.split_once(':') else {
+                    continue;
+                };
+                let value = value
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string();
+                match key.trim() {
+                    "name" if !value.is_empty() => name = value,
+                    "description" => description = value,
+                    _ => {}
+                }
+            }
+            body = rest[end + 4..].trim().to_string();
+        }
+    }
+
+    if name.trim().is_empty() || body.is_empty() {
+        return None;
+    }
+
+    Some(Skill {
+        id: String::new(),
+        name,
+        description,
+        body,
+        enabled: true,
+    })
+}
+
 /// Renders memory and the enabled skills as the block appended to every agent's system prompt.
 ///
 /// Returns `None` when there is nothing to say. An empty heading is worse than no heading: it

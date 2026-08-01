@@ -1154,6 +1154,69 @@ pub async fn save_project_memory(
         .map_err(|e| e.to_string())
 }
 
+/// What an import would bring in, and what it brought.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportedKnowledge {
+    pub memory_imported: bool,
+    pub skills_imported: usize,
+}
+
+/// Pulls the repository's own `CLAUDE.md` and `.claude/skills` into project knowledge.
+///
+/// Agents cannot read those files — they spawn with `--setting-sources ''` — so a repository that
+/// already documents its conventions has them sitting where the team will never see them. Import
+/// is a deliberate act rather than an automatic read, because these files move with the branch and
+/// a run silently changing behaviour on checkout would be untraceable.
+#[tauri::command]
+pub async fn import_project_knowledge(
+    state: State<'_, AppState>,
+) -> Result<ImportedKnowledge, String> {
+    let Some(repo) = state.project.read().clone() else {
+        return Err("No project is open.".into());
+    };
+    let project_id = state.identity.read().project_id.clone();
+    let found = deck_core::store::knowledge::discover(&repo);
+
+    let mut memory_imported = false;
+    if let Some(memory) = found.memory {
+        // Appended rather than overwritten. Whatever the operator has already written here was
+        // typed deliberately, and an import is not a reason to discard it.
+        let existing = deck_core::store::knowledge::memory(&state.store, &project_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if !existing.contains(memory.trim()) {
+            let merged = if existing.trim().is_empty() {
+                memory
+            } else {
+                format!(
+                    "{}
+
+{}",
+                    existing.trim_end(),
+                    memory
+                )
+            };
+            deck_core::store::knowledge::save_memory(&state.store, &project_id, &merged)
+                .await
+                .map_err(|e| e.to_string())?;
+            memory_imported = true;
+        }
+    }
+
+    let mut skills_imported = 0;
+    for skill in found.skills {
+        deck_core::store::knowledge::save_skill(&state.store, &project_id, &skill)
+            .await
+            .map_err(|e| e.to_string())?;
+        skills_imported += 1;
+    }
+
+    Ok(ImportedKnowledge {
+        memory_imported,
+        skills_imported,
+    })
+}
+
 #[tauri::command]
 pub async fn list_skills(state: State<'_, AppState>) -> Result<Vec<SkillDto>, String> {
     let project_id = state.identity.read().project_id.clone();
@@ -1460,8 +1523,40 @@ pub struct DecisionSummary {
 
 #[tauri::command]
 pub async fn get_run_snapshot(state: State<'_, AppState>) -> Result<RunSnapshot, String> {
-    let snapshot = state.run_snapshot.lock().clone();
-    Ok(snapshot.unwrap_or_default())
+    let mut snapshot = state.run_snapshot.lock().clone().unwrap_or_default();
+
+    // The run's roster is the team it started with, frozen at that moment so assignments cannot
+    // change underneath the stage choosing between them. That is right for the supervisor and
+    // wrong for the screen: someone hired just now was invisible until the next run, and with no
+    // run at all the roster was empty, which made hiring look like it had silently failed.
+    let identity = state.identity.read().clone();
+    if let Ok(hired) = deck_core::store::agents::active(&state.store, &identity).await {
+        let known: std::collections::HashSet<String> =
+            snapshot.agents.iter().map(|a| a.id.clone()).collect();
+
+        for agent in hired {
+            let id = agent.id.to_string();
+            if known.contains(&id) {
+                continue;
+            }
+            snapshot.agents.push(AgentSummary {
+                id,
+                name: agent.name,
+                role: agent.role,
+                // Idle is the truth: they are on the team and holding no task. They become
+                // assignable at the supervisor's next iteration, or at the next run.
+                status: "idle".into(),
+                activity: None,
+                task_id: None,
+                session_id: None,
+                branch: None,
+                attempts: 0,
+                review_rounds: 0,
+            });
+        }
+    }
+
+    Ok(snapshot)
 }
 
 /// Identity and team of the current run, which the graph itself does not carry.

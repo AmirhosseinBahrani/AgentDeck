@@ -174,3 +174,93 @@ pub fn repository_root(path: &Path) -> Option<PathBuf> {
         .find(|dir| dir.join(".git").exists())
         .map(|dir| dir.to_path_buf())
 }
+
+/// A repository registered in this workspace.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ProjectRow {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    /// False once the directory has been moved or deleted. Shown rather than hidden: a project
+    /// vanishing from the list without explanation is more alarming than one marked missing.
+    pub exists: bool,
+}
+
+/// Every repository the operator has opened in this workspace.
+pub async fn list_projects(store: &Store) -> Result<Vec<ProjectRow>, StoreError> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id, name, path FROM projects WHERE workspace_id = ?1 ORDER BY created_at",
+    )
+    .bind(LOCAL_WORKSPACE_ID)
+    .fetch_all(store.reader())
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        // The placeholder row that exists only so the schema's foreign keys resolve when no
+        // project has been chosen is not a project anyone opened.
+        .filter(|(_, _, path)| path != "/nonexistent")
+        .map(|(id, name, path)| ProjectRow {
+            exists: is_repository(Path::new(&path)),
+            id,
+            name,
+            path,
+        })
+        .collect())
+}
+
+/// Whether a repository has any commits yet.
+///
+/// Worth its own question: `git worktree add` needs something to branch from, and a repository
+/// created a moment ago has no HEAD. An empty repo looks valid to every other check and then
+/// fails the first time an agent is dispatched.
+pub async fn has_commits(repo: &Path) -> bool {
+    tokio::process::Command::new("git")
+        .args(["rev-parse", "--verify", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Turns a plain directory into a repository agents can work in.
+///
+/// Two steps, and the second is not optional. `git init` alone leaves a repository with no HEAD,
+/// and `git worktree add` has nothing to branch from — so the first dispatch would fail with an
+/// error about an invalid reference, a long way from this decision. The empty commit gives every
+/// worktree a base.
+pub async fn initialize_repository(path: &Path) -> Result<(), String> {
+    if !path.is_dir() {
+        return Err(format!("{} is not a folder", path.display()));
+    }
+
+    if repository_root(path).is_none() {
+        run_git(path, &["init"]).await?;
+    }
+
+    if !has_commits(path).await {
+        run_git(path, &["commit", "--allow-empty", "-m", "Initial commit"]).await?;
+    }
+    Ok(())
+}
+
+async fn run_git(cwd: &Path, args: &[&str]) -> Result<(), String> {
+    let output = tokio::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        // Never prompt: a credential or editor prompt here would hang with no visible cause.
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_EDITOR", "true")
+        .output()
+        .await
+        .map_err(|e| format!("could not run git {}: {e}", args.join(" ")))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+    }
+}

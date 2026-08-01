@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
-import { ProjectGate, pickProject } from "./features/setup/ProjectGate";
+import { ProjectGate, useProjectPicker } from "./features/setup/ProjectGate";
 import { RuntimeGate } from "./features/setup/RuntimeGate";
 import { NavTabs, type NavTab } from "./features/shell/NavTabs";
 import { TitleBar } from "./features/shell/TitleBar";
@@ -50,6 +50,7 @@ function Deck() {
   const [active, setActive] = useState<string | null>(null);
   const [view, setView] = useState<NavTab>("team");
   const stats = usePumpStats();
+  const picker = useProjectPicker(setProject);
 
   // Rust drops token deltas for anything not in this list, so it must reflect what is visible.
   useSessionSubscriptions(active ? [active] : []);
@@ -78,10 +79,12 @@ function Deck() {
 
   return (
     <div className="relative flex h-full flex-col text-deck-text">
+      {picker.dialog}
+
       <TitleBar
         project={project?.name ?? "no project"}
         projectPath={project?.path ?? undefined}
-        onChangeProject={() => void pickProject().then((p) => p && setProject(p))}
+        onChangeProject={() => void picker.pick()}
         autonomy={snapshot?.autonomy ?? "assisted"}
         running={!!snapshot?.active}
       />
@@ -107,7 +110,15 @@ function Deck() {
 
       {view === "team" && (
         <div className="min-h-0 flex-1">
-          <TeamView onOpenSession={openSession} />
+          <TeamView
+            onOpenSession={openSession}
+            projectPath={project?.path ?? null}
+            onProjectChanged={() =>
+              void invoke<ProjectInfo>("get_project")
+                .then(setProject)
+                .catch(() => {})
+            }
+          />
         </div>
       )}
 

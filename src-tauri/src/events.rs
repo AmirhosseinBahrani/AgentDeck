@@ -566,6 +566,63 @@ pub async fn get_project(state: State<'_, AppState>) -> Result<ProjectInfo, Stri
     })
 }
 
+/// What a folder is, before committing to it.
+///
+/// Asked separately from opening so the operator can be told what will happen — initialising a
+/// repository writes to a directory they picked, and that should be a decision rather than a
+/// side effect of choosing a folder.
+#[derive(serde::Serialize)]
+pub struct FolderInfo {
+    pub path: String,
+    pub name: String,
+    pub is_repository: bool,
+    /// False for a repository with no commits, which cannot host a worktree yet.
+    pub has_commits: bool,
+}
+
+#[tauri::command]
+pub async fn inspect_folder(path: String) -> Result<FolderInfo, String> {
+    let path = std::path::PathBuf::from(&path)
+        .canonicalize()
+        .map_err(|e| format!("could not read that folder: {e}"))?;
+
+    let root = deck_core::store::identity::repository_root(&path);
+    Ok(FolderInfo {
+        name: path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        has_commits: match &root {
+            Some(r) => deck_core::store::identity::has_commits(r).await,
+            None => false,
+        },
+        is_repository: root.is_some(),
+        path: path.display().to_string(),
+    })
+}
+
+/// Makes a folder into a repository, then opens it.
+///
+/// Only reachable after the operator has agreed: `git init` writes into a directory they chose,
+/// and doing it silently because the folder happened not to be a repository would be taking a
+/// decision on their behalf.
+#[tauri::command]
+pub async fn init_project(state: State<'_, AppState>, path: String) -> Result<ProjectInfo, String> {
+    deck_core::store::identity::initialize_repository(std::path::Path::new(&path)).await?;
+    state.open_project(std::path::PathBuf::from(path)).await?;
+    get_project(state).await
+}
+
+/// Every repository this workspace knows about.
+#[tauri::command]
+pub async fn list_projects(
+    state: State<'_, AppState>,
+) -> Result<Vec<deck_core::store::identity::ProjectRow>, String> {
+    deck_core::store::identity::list_projects(&state.store)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Points the app at a repository the operator picks.
 ///
 /// Validated here rather than trusted from the dialog: someone can choose any folder, and a
@@ -574,6 +631,15 @@ pub async fn get_project(state: State<'_, AppState>) -> Result<ProjectInfo, Stri
 /// what it is working on.
 #[tauri::command]
 pub async fn set_project(state: State<'_, AppState>, path: String) -> Result<ProjectInfo, String> {
+    // Refused while a run is live. Agents hold worktrees inside the current repository, and
+    // swapping the project underneath them would leave the roster describing one codebase while
+    // the processes wrote into another.
+    if state.live_run.lock().await.is_some() {
+        return Err(
+            "Stop the run before switching project — its agents are working in this repository."
+                .into(),
+        );
+    }
     state.open_project(std::path::PathBuf::from(path)).await?;
     get_project(state).await
 }

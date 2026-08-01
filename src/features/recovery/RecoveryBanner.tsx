@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { RotateCcw, TriangleAlert, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Button } from "../../components/ui/button";
 import type { RecoveryReport, ResumableSummary } from "../../lib/types";
 
 /**
@@ -61,39 +63,43 @@ export function RecoveryBanner() {
   }
 
   return (
-    <div className="shrink-0 border-b border-amber-900/60 bg-amber-950/25 px-4 py-2 text-[11px]">
-      <div className="flex items-baseline gap-2">
-        <span className="font-medium text-amber-200">AgentDeck did not shut down cleanly</span>
-        <span className="text-amber-400/80">{describe(report)}</span>
-        <button
-          onClick={() => setDismissed(true)}
-          className="ml-auto text-amber-500/70 hover:text-amber-300"
-        >
-          Dismiss
-        </button>
+    <div className="animate-rise shrink-0 border-b border-deck-attention/25 bg-deck-attention/8 px-4 py-2 text-[11px]">
+      <div className="flex items-center gap-2">
+        <TriangleAlert className="size-3.5 shrink-0 text-deck-attention" />
+        <span className="font-medium text-deck-attention">
+          AgentDeck did not shut down cleanly
+        </span>
+        <span className="text-deck-attention/75">{describe(report)}</span>
+        <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setDismissed(true)}>
+          <X /> Dismiss
+        </Button>
       </div>
 
       {resumable.length > 0 && (
         <ul className="mt-1.5 space-y-1">
           {resumable.map((session) => (
             <li key={session.session_id} className="flex items-center gap-2">
-              <span className="font-mono text-[10px] text-neutral-400">
+              <span className="font-mono text-[10px] text-deck-dim">
                 {session.session_id.slice(0, 8)}
               </span>
-              <span className="min-w-0 flex-1 truncate text-neutral-500">{session.cwd}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-deck-faint">
+                {session.cwd}
+              </span>
               {session.resumable ? (
-                <button
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => void resume(session.session_id)}
                   disabled={busy === session.session_id}
-                  className="rounded border border-amber-800/70 px-1.5 py-0.5 text-amber-200 hover:bg-amber-900/40 disabled:opacity-50"
                 >
+                  <RotateCcw />
                   {busy === session.session_id ? "Reopening…" : "Reopen"}
-                </button>
+                </Button>
               ) : (
                 // Stated rather than left to a failed click: the worktree is gone, and Claude
                 // buckets conversations by directory, so this one is unreachable for good.
                 <span
-                  className="text-neutral-600"
+                  className="text-deck-faint"
                   title="Its worktree was removed, which deletes the conversation with it"
                 >
                   worktree gone
@@ -104,7 +110,7 @@ export function RecoveryBanner() {
         </ul>
       )}
 
-      {error && <div className="mt-1 text-red-400">{error}</div>}
+      {error && <div className="mt-1 text-deck-danger">{error}</div>}
     </div>
   );
 }

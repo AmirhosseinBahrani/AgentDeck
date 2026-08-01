@@ -126,21 +126,6 @@ export function TeamView({ onOpenSession }: { onOpenSession: (sessionId?: string
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <nav className="flex h-[42px] shrink-0 items-center gap-5 border-b border-white/[0.07] px-7">
-        <span className="flex h-[42px] items-center border-b-[1.5px] border-deck-live text-[12.5px] font-semibold text-deck-text">
-          Team
-        </span>
-        <button
-          onClick={() => onOpenSession()}
-          className="text-[12.5px] text-deck-faint transition-colors hover:text-deck-dim"
-        >
-          Sessions
-        </button>
-        <div className="grow" />
-        <span className="font-mono text-[10.5px] text-deck-faint">
-          run {snapshot?.run_id} · {elapsed(snapshot?.started_at_ms, now)} elapsed
-        </span>
-      </nav>
 
       <header className="flex shrink-0 items-end gap-[60px] border-b border-white/[0.07] px-7 pt-[22px] pb-[18px]">
         <div className="flex min-w-0 grow flex-col gap-3">

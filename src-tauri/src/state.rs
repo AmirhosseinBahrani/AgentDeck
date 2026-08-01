@@ -53,8 +53,13 @@ pub struct AppState {
     /// Wakes the running loop. Also how cancellation reaches it.
     pub run_triggers:
         Arc<Mutex<Option<tokio::sync::mpsc::Sender<deck_supervisor::loop_engine::Trigger>>>>,
-    /// Latest dashboard snapshot, refreshed by the loop after each iteration.
-    pub run_snapshot: Arc<Mutex<Option<crate::events::RunSnapshot>>>,
+    /// Latest dashboard snapshot.
+    ///
+    /// A synchronous lock on purpose. The observer that writes it is called from inside the loop
+    /// between iterations, and the previous version spawned a task per iteration to do the write
+    /// — which meant two writes could land out of order and the dashboard would oscillate
+    /// between an older and a newer picture every couple of seconds.
+    pub run_snapshot: Arc<parking_lot::Mutex<Option<crate::events::RunSnapshot>>>,
     /// Worker reports awaiting the driver's IngestReports stage.
     pub pending_claims: crate::supervision::SharedClaims,
     /// Dispatch approvals the operator has granted but the driver has not yet acted on.
@@ -174,7 +179,7 @@ impl AppState {
             demo_broker,
             live_run: Arc::new(Mutex::new(None)),
             run_triggers: Arc::new(Mutex::new(None)),
-            run_snapshot: Arc::new(Mutex::new(None)),
+            run_snapshot: Arc::new(parking_lot::Mutex::new(None)),
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_approvals: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),

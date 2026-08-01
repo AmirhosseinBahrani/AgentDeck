@@ -805,7 +805,8 @@ impl<'a> Driver<'a> {
             }
 
             // Only worth a model call when there is an actual choice to make.
-            let choice = if eligible.len() > 1 {
+            let had_a_choice = eligible.len() > 1;
+            let choice = if had_a_choice {
                 let prompt = format!(
                     "Choose which agent should take this task.\n\nTask: {}\nRole: {role}\n",
                     run.graph
@@ -853,12 +854,23 @@ impl<'a> Driver<'a> {
                         0,
                         choice_cost(&eligible),
                     ),
+                    // Two different things reach this arm and the log used to call both of
+                    // them a failed model choice. With one candidate no model is consulted at
+                    // all, and reporting that as "no usable model choice" sends whoever reads
+                    // the log looking for a model problem that never happened.
+                    AssignmentSource::Fallback if !had_a_choice => run.log.record_code_decision(
+                        run.state.iteration,
+                        Stage::Assign,
+                        "choose_assignee",
+                        "only_candidate",
+                        &format!("{role} is the only agent for this task; assigned directly"),
+                    ),
                     AssignmentSource::Fallback => run.log.record_code_decision(
                         run.state.iteration,
                         Stage::Assign,
                         "choose_assignee",
                         "least_loaded",
-                        "no usable model choice; assigned the least-loaded eligible agent",
+                        "the model's choice was unusable; assigned the least-loaded eligible agent",
                     ),
                 }
             }

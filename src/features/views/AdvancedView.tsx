@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
 import { SectionRule } from "../../components/ui/section-rule";
 import { cn } from "../../lib/utils";
 
@@ -60,7 +62,9 @@ export function AdvancedView({ project }: { project: string | null }) {
   );
 
   return (
-    <div className="flex min-h-0 grow flex-col gap-5 overflow-y-auto px-7 pt-[18px] pb-[26px]">
+    <div className="flex min-h-0 grow flex-col gap-6 overflow-y-auto px-7 pt-[18px] pb-[26px]">
+      <Permissions project={project} />
+
       <div className="flex flex-col gap-1">
         <SectionRule label="Team metrics" trailing={project ?? undefined} />
         <p className="text-[11.5px] leading-relaxed text-deck-faint">
@@ -138,6 +142,162 @@ export function AdvancedView({ project }: { project: string | null }) {
           ))
       )}
     </div>
+  );
+}
+
+const LEVELS: { id: string; label: string; description: string }[] = [
+  {
+    id: "cautious",
+    label: "Cautious",
+    description:
+      "Reads and searches freely. Every write and every shell command is asked about first.",
+  },
+  {
+    id: "standard",
+    label: "Standard",
+    description:
+      "Edits inside its own worktree without asking. Shell is limited to a known list of build, test and git commands.",
+  },
+  {
+    id: "trusted",
+    label: "Trusted",
+    description:
+      "As Standard, plus any shell command that the refuse-list does not catch.",
+  },
+];
+
+/**
+ * How much the team may do here without asking.
+ *
+ * One axis rather than a tool-by-tool grid, because the operator's actual question is how far
+ * they trust agents on this codebase. What the axis cannot move is stated rather than hidden: the
+ * worktree boundary is enforced by the CLI, and the refuse-list is unioned across policy layers
+ * and cannot be overridden downstream — so a control that appeared to relax either would be
+ * claiming something the resolver does not honour.
+ */
+function Permissions({ project }: { project: string | null }) {
+  const [level, setLevel] = useState("standard");
+  const [extra, setExtra] = useState<string[]>([]);
+  const [draft, setDraft] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    void invoke<{ level: string; extra_bash: string[] }>("get_permissions")
+      .then((p) => {
+        setLevel(p.level);
+        setExtra(p.extra_bash);
+      })
+      .catch(() => {});
+  }, [project]);
+
+  async function persist(nextLevel: string, nextExtra: string[]) {
+    setLevel(nextLevel);
+    setExtra(nextExtra);
+    try {
+      await invoke("save_permissions", {
+        settings: { level: nextLevel, extra_bash: nextExtra },
+      });
+      setStatus("Saved. Applies to the next run — agents already working keep the rules they started under.");
+    } catch (e) {
+      setStatus(String(e));
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2.5">
+      <SectionRule label="Permissions" trailing={project ?? undefined} />
+
+      <div className="flex flex-col gap-1.5">
+        {LEVELS.map((option) => (
+          <button
+            key={option.id}
+            onClick={() => void persist(option.id, extra)}
+            className={cn(
+              "flex items-start gap-3 rounded-[var(--radius-panel)] border px-3.5 py-2.5 text-left transition-colors",
+              level === option.id
+                ? "border-deck-live/40 bg-deck-live/[0.08]"
+                : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.045]",
+            )}
+          >
+            <span
+              className={cn(
+                "mt-[3px] size-2.5 shrink-0 rounded-full border",
+                level === option.id
+                  ? "border-deck-live bg-deck-live"
+                  : "border-deck-faint/60",
+              )}
+            />
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span
+                className={cn(
+                  "text-[12.5px] font-medium",
+                  level === option.id ? "text-deck-text" : "text-deck-dim",
+                )}
+              >
+                {option.label}
+              </span>
+              <span className="text-[11.5px] leading-relaxed text-deck-faint">
+                {option.description}
+              </span>
+            </span>
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[11px] leading-relaxed text-deck-faint">
+        At every level agents stay inside their own worktree, and{" "}
+        <span className="font-mono text-deck-dim">rm -rf</span>,{" "}
+        <span className="font-mono text-deck-dim">sudo</span>,{" "}
+        <span className="font-mono text-deck-dim">git push</span> and network fetches are always
+        refused. Those are not on this dial.
+      </p>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="label-micro">Always allow these commands</span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {extra.map((prefix) => (
+            <span
+              key={prefix}
+              className="flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 font-mono text-[11px] text-deck-dim"
+            >
+              {prefix}
+              <button
+                onClick={() => void persist(level, extra.filter((p) => p !== prefix))}
+                className="text-deck-faint transition-colors hover:text-deck-attention"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+          <Input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && draft.trim()) {
+                void persist(level, [...extra, draft.trim()]);
+                setDraft("");
+              }
+            }}
+            placeholder="make test"
+            className="w-[160px]"
+          />
+          {draft.trim() && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                void persist(level, [...extra, draft.trim()]);
+                setDraft("");
+              }}
+            >
+              Add
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {status && <p className="text-[11px] leading-relaxed text-deck-dim">{status}</p>}
+    </section>
   );
 }
 

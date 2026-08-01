@@ -31,6 +31,10 @@ pub struct AgentWorkspace {
     /// Role prompt appended to the CLI's default system prompt.
     pub system_prompt: Option<String>,
     pub model: Option<String>,
+    /// Cautious runs without `acceptEdits`, so the CLI itself asks before applying an edit.
+    /// Enforcing it here as well as in the broker means the posture holds even for a tool call
+    /// the policy has no opinion on.
+    pub accepts_edits: bool,
 }
 
 impl AgentWorkspace {
@@ -41,7 +45,11 @@ impl AgentWorkspace {
     /// alone.
     pub fn spawn_options(&self, session_id: SessionId) -> SpawnOptions {
         let mut config = SessionConfig::new(session_id, self.worktree.path.clone());
-        config.permission_mode = PermissionMode::AcceptEdits;
+        config.permission_mode = if self.accepts_edits {
+            PermissionMode::AcceptEdits
+        } else {
+            PermissionMode::Default
+        };
         config.model = self.model.clone();
         config.system_prompt_append = self.system_prompt.clone();
         config.tools = vec![
@@ -119,7 +127,7 @@ impl WorkspaceRegistry {
             .canonicalize()
             .unwrap_or_else(|_| worktree.path.clone());
 
-        let mut layers = vec![worker_defaults()];
+        let mut layers = vec![request.base_layer.clone().unwrap_or_else(worker_defaults)];
         layers.extend(request.extra_layers.iter().cloned());
         let policy = EffectivePolicy::resolve(root, &layers);
 
@@ -131,6 +139,7 @@ impl WorkspaceRegistry {
             broker: Arc::new(PermissionBroker::new(policy)),
             system_prompt: request.system_prompt.map(str::to_string),
             model: request.model.map(str::to_string),
+            accepts_edits: request.accepts_edits,
         });
 
         self.by_task.insert(request.task_id, workspace.clone());
@@ -186,9 +195,17 @@ pub struct PrepareRequest<'a> {
     pub base_ref: &'a str,
     pub system_prompt: Option<&'a str>,
     pub model: Option<&'a str>,
-    /// Layers applied on top of the worker defaults. Denials still union, so a caller cannot
-    /// widen the boundary by passing a permissive layer.
+    /// Layers applied on top of the base. Denials still union, so a caller cannot widen the
+    /// boundary by passing a permissive layer.
     pub extra_layers: Vec<PolicyLayer>,
+    /// The project's chosen posture. `None` is the standard worker default.
+    ///
+    /// Passed as the base rather than as an extra layer because allow rules only ever narrow as
+    /// layers compose — a more permissive layer stacked on top would be silently ignored, which
+    /// is exactly how a permission control ends up not controlling anything.
+    pub base_layer: Option<PolicyLayer>,
+    /// False for the cautious posture, which drops `acceptEdits` so the CLI asks before writing.
+    pub accepts_edits: bool,
 }
 
 /// Short, filesystem- and branch-safe form of a task id.

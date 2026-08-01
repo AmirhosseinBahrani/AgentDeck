@@ -42,6 +42,10 @@ pub struct LiveWorkspaces {
     store: Store,
     boot: BootId,
     identity: LocalIdentity,
+    /// The project's permission posture, resolved once per run for the same reason knowledge is:
+    /// agents from one run must not be operating under different rules from each other.
+    policy: deck_core::permission::PolicyLayer,
+    accepts_edits: bool,
     /// The operator's notes and enabled skills, rendered once per run.
     ///
     /// Snapshotted at run start rather than read per dispatch: agents dispatched by the same run
@@ -73,8 +77,21 @@ impl LiveWorkspaces {
             store,
             boot,
             identity,
+            policy: deck_core::permission::worker_defaults(),
+            accepts_edits: true,
             knowledge: None,
         }
+    }
+
+    /// Sets the permission posture every agent this run spawns will work under.
+    pub fn with_policy(
+        mut self,
+        level: deck_core::permission::PermissionLevel,
+        extra_bash: &[String],
+    ) -> Self {
+        self.policy = deck_core::permission::level_layer(level, extra_bash);
+        self.accepts_edits = level.accepts_edits();
+        self
     }
 
     /// Sets the standing project knowledge every agent this run spawns will be given.
@@ -139,6 +156,8 @@ impl Workspaces for LiveWorkspaces {
                 system_prompt: self.knowledge.as_deref(),
                 model: self.model.as_deref(),
                 extra_layers: vec![],
+                base_layer: Some(self.policy.clone()),
+                accepts_edits: self.accepts_edits,
             })
             .await
             .map_err(|e| DispatchError::WorkspaceUnavailable {

@@ -327,3 +327,58 @@ mod tests {
         assert!(rendered.contains("do not widen what you are permitted to do"));
     }
 }
+
+/// The permission posture chosen for a project.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PermissionSettings {
+    pub level: crate::permission::PermissionLevel,
+    /// Shell prefixes auto-approved on top of whatever the level allows.
+    pub extra_bash: Vec<String>,
+}
+
+pub async fn permissions(
+    store: &Store,
+    project_id: &str,
+) -> Result<PermissionSettings, StoreError> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT level, extra_bash_json FROM project_permissions WHERE project_id = ?1",
+    )
+    .bind(project_id)
+    .fetch_optional(store.reader())
+    .await?;
+
+    // A project with no row gets the default rather than an error: not having chosen is the
+    // normal state, and it means the middle setting.
+    Ok(row
+        .map(|(level, extra)| PermissionSettings {
+            level: crate::permission::PermissionLevel::parse(&level),
+            extra_bash: serde_json::from_str(&extra).unwrap_or_default(),
+        })
+        .unwrap_or_default())
+}
+
+pub async fn save_permissions(
+    store: &Store,
+    project_id: &str,
+    settings: &PermissionSettings,
+) -> Result<(), StoreError> {
+    let extra: Vec<String> = settings
+        .extra_bash
+        .iter()
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    sqlx::query(
+        "INSERT INTO project_permissions (project_id, level, extra_bash_json, updated_at)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (project_id) DO UPDATE SET level = ?2, extra_bash_json = ?3, updated_at = ?4",
+    )
+    .bind(project_id)
+    .bind(settings.level.as_str())
+    .bind(serde_json::to_string(&extra).unwrap_or_else(|_| "[]".into()))
+    .bind(now_ms())
+    .execute(store.writer())
+    .await?;
+    Ok(())
+}

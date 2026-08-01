@@ -330,6 +330,11 @@ pub async fn start_supervisor_run(
         knowledge::render_for_prompt(&memory, &skills)
     };
 
+    let permissions = deck_core::store::knowledge::permissions(&state.store, &identity.project_id)
+        .await
+        .unwrap_or_default();
+    tracing::info!(level = permissions.level.as_str(), "run permission posture");
+
     let workspaces = std::sync::Arc::new(
         crate::supervision::LiveWorkspaces::new(
             state.workspaces.read().clone(),
@@ -340,7 +345,8 @@ pub async fn start_supervisor_run(
             state.boot.clone(),
             identity.clone(),
         )
-        .with_knowledge(knowledge),
+        .with_knowledge(knowledge)
+        .with_policy(permissions.level, &permissions.extra_bash),
     );
     let planner = crate::supervision::CliPlanner::new(repo);
 
@@ -957,6 +963,48 @@ pub async fn agent_metrics(state: State<'_, AppState>) -> Result<Vec<AgentMetric
             last_active_ms: m.last_active_ms,
         })
         .collect())
+}
+
+/// The project's permission posture, as the Advanced tab edits it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PermissionsDto {
+    pub level: String,
+    pub extra_bash: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn get_permissions(state: State<'_, AppState>) -> Result<PermissionsDto, String> {
+    let project_id = state.identity.read().project_id.clone();
+    let settings = deck_core::store::knowledge::permissions(&state.store, &project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(PermissionsDto {
+        level: settings.level.as_str().to_string(),
+        extra_bash: settings.extra_bash,
+    })
+}
+
+/// Changes what agents may do without being asked.
+///
+/// Takes effect for the next run, not the current one: a live agent's policy was resolved when it
+/// spawned, and moving the boundary underneath a process already working would mean the run's own
+/// decision log no longer described the rules it ran under.
+#[tauri::command]
+pub async fn save_permissions(
+    state: State<'_, AppState>,
+    settings: PermissionsDto,
+) -> Result<(), String> {
+    let project_id = state.identity.read().project_id.clone();
+    deck_core::store::knowledge::save_permissions(
+        &state.store,
+        &project_id,
+        &deck_core::store::knowledge::PermissionSettings {
+            level: deck_core::permission::PermissionLevel::parse(&settings.level),
+            extra_bash: settings.extra_bash,
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Adds someone to the team.

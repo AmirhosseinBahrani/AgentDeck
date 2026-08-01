@@ -206,10 +206,19 @@ impl Run {
         true
     }
 
+    /// How much work an agent is already holding.
+    ///
+    /// Counts Assigned as well as Running. Assignment happens for the whole ready set in one
+    /// stage, before any of it is dispatched, so a load that only counted running work saw every
+    /// agent as free for every task in the batch — and least-loaded then resolved to the same
+    /// agent each time, handing one agent the entire graph while the rest stayed idle.
     fn load_of(&self, agent: AgentId) -> usize {
         self.graph
             .tasks()
-            .filter(|t| t.assignee == Some(agent) && t.status.is_active())
+            .filter(|t| {
+                t.assignee == Some(agent)
+                    && (t.status.is_active() || t.status == TaskStatus::Assigned)
+            })
             .count()
     }
 }
@@ -862,15 +871,34 @@ impl<'a> Driver<'a> {
                 continue;
             }
 
-            // Only worth a model call when there is an actual choice to make.
-            let had_a_choice = eligible.len() > 1;
+            // Spreading is not a judgement call. If anyone with this role is free, the right
+            // answer is the least-loaded one — that is the entire reason for hiring three
+            // frontend engineers, and asking a model to confirm it costs a request to be told
+            // something code already knows. Worse, the model was being handed a task *id* and no
+            // roster, so it had nothing to reason from and tended to name the same agent every
+            // time, piling work onto one while the rest sat idle.
+            let anyone_free = eligible.iter().any(|id| run.load_of(*id) == 0);
+            let had_a_choice = eligible.len() > 1 && !anyone_free;
+
+            let title_for_prompt = run
+                .titles
+                .get(&task_id)
+                .cloned()
+                .unwrap_or_else(|| task_id.to_string());
+
             let choice = if had_a_choice {
+                // Everyone is busy, so this is a real question: whose queue should it join. The
+                // roster and its loads are what makes it answerable.
+                let roster: String = eligible
+                    .iter()
+                    .map(|id| format!("- {id} — {} task(s) in flight\n", run.load_of(*id)))
+                    .collect();
                 let prompt = format!(
-                    "Choose which agent should take this task.\n\nTask: {}\nRole: {role}\n",
-                    run.graph
-                        .get(task_id)
-                        .map(|t| t.id.to_string())
-                        .unwrap_or_default()
+                    "Choose which agent should take this task.\n\n\
+                     Task: {title_for_prompt}\nRole: {role}\n\n\
+                     Every candidate already has work in flight:\n{roster}\n\
+                     Prefer the one that will finish soonest and whose current work is closest \
+                     to this task.\n"
                 );
                 decisions
                     .assign(
@@ -923,6 +951,19 @@ impl<'a> Driver<'a> {
                         "only_candidate",
                         &format!("{role} is the only agent for this task; assigned directly"),
                     ),
+                    AssignmentSource::Fallback if anyone_free && eligible.len() > 1 => {
+                        run.log.record_code_decision(
+                            run.state.iteration,
+                            Stage::Assign,
+                            "choose_assignee",
+                            "spread_across_free",
+                            &format!(
+                                "{} agents hold this role and at least one was free; \
+                                 assigned the least-loaded",
+                                eligible.len()
+                            ),
+                        )
+                    }
                     AssignmentSource::Fallback => run.log.record_code_decision(
                         run.state.iteration,
                         Stage::Assign,

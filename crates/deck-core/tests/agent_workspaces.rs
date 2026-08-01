@@ -48,6 +48,8 @@ fn request<'a>(slug: &'a str, task: TaskId, title: &'a str) -> PrepareRequest<'a
         system_prompt: None,
         model: None,
         extra_layers: vec![],
+        base_layer: None,
+        accepts_edits: true,
     }
 }
 

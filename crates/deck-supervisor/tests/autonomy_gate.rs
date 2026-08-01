@@ -689,3 +689,54 @@ async fn no_more_than_the_cap_may_be_working_at_once() {
         "the rest stay assigned and wait for a slot rather than failing or escalating"
     );
 }
+
+#[tokio::test]
+async fn tasks_spread_across_agents_that_share_a_role() {
+    // Hiring three frontend engineers only means anything if the graph is spread across them.
+    // The model used to be asked which one should take each task, given the task's *id* and no
+    // roster — nothing to reason from, so it named the same agent every time and two of the three
+    // sat idle. Code decides while anyone is free.
+    let root = workdir("spread");
+    let mut cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    cfg.team = (0..3)
+        .map(|_| TeamMember {
+            agent_id: AgentId::new(),
+            role: "developer".into(),
+        })
+        .collect();
+
+    let planner = ScriptedPlanner::new();
+    planner.push(
+        json!({
+            "tasks": (0..3).map(|i| json!({
+                "tmp_id": format!("t{i}"), "title": format!("Task {i}"), "role": "developer",
+                "objective_gate": true, "description": "",
+                "contract": {
+                    "version": 1,
+                    "acceptance_criteria": [{
+                        "id": format!("c{i}"), "text": "it works",
+                        "verify": { "type": "command", "cmd": "true", "expect_exit_zero": true }
+                    }],
+                    "constraints": [], "deliverables": [], "definition_of_done": "done"
+                }
+            })).collect::<Vec<_>>(),
+            "edges": [], "reasoning": "three independent tasks"
+        }),
+        0.10,
+    );
+
+    let workspaces = FakeWorkspaces::new(root);
+    let driver = Driver::new(&cfg, &planner, &workspaces);
+    let mut run = Run::new();
+    driver.step(&mut run, true).await;
+
+    let mut per_agent = std::collections::HashMap::new();
+    for task in run.graph.tasks() {
+        if let Some(agent) = task.assignee {
+            *per_agent.entry(agent).or_insert(0) += 1;
+        }
+    }
+
+    assert_eq!(per_agent.len(), 3, "one task each, not three on one agent");
+    assert!(per_agent.values().all(|&n| n == 1));
+}

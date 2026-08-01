@@ -165,8 +165,10 @@ fn the_run_completes_once_the_branches_integrate() {
 fn hitting_the_iteration_cap_blocks_on_a_human_rather_than_failing() {
     // Failing autonomously would discard everything the run produced; a human can raise the cap.
     let g = graph_with(vec![gate()]);
+    // The cap counts productive passes, not polls: the sweep asks for a pass whenever an agent is
+    // simply working, and counting those spent the whole budget on ordinary progress.
     let state = RunState {
-        iteration: 200,
+        productive: 200,
         ..Default::default()
     };
     let outcome = sweep(&state, &g, RunLimits::default(), true);

@@ -73,6 +73,21 @@ pub trait Workspaces: Send + Sync {
         timeout: std::time::Duration,
     ) -> IntegrationOutcome;
 
+    /// How long an agent has produced nothing at all, while still alive.
+    ///
+    /// `None` when there is no live agent or nothing has been observed yet. This is the only way
+    /// to notice the failure mode where an agent finishes its work, says so in prose, and never
+    /// calls `claim_task_done` — the process stays up, so nothing exits, and the task sits in
+    /// Running for as long as the run lasts.
+    fn idle_for(&self, task_id: TaskId) -> Option<std::time::Duration>;
+
+    /// Asks a live agent to do something, in its own session.
+    ///
+    /// Used to nudge a silent agent toward the completion protocol rather than failing it
+    /// outright: it is usually one tool call away from being finished, and throwing the work away
+    /// to start again would be the most expensive possible response.
+    async fn nudge(&self, task_id: TaskId, message: &str) -> bool;
+
     /// Moves a successful integration onto the branch the operator has checked out.
     ///
     /// Called only after the gate is satisfied. Until this exists, a finished run leaves the
@@ -136,6 +151,9 @@ pub struct FakeWorkspaces {
     integration: parking_lot::Mutex<Option<IntegrationOutcome>>,
     /// Whether the run reached the point of putting its work on the project's branch.
     landed: parking_lot::Mutex<bool>,
+    /// Scripted silence per task, so a test can age an agent without waiting.
+    idle: parking_lot::Mutex<std::collections::HashMap<TaskId, std::time::Duration>>,
+    nudged: parking_lot::Mutex<Vec<TaskId>>,
     /// Tasks whose agent a test has declared dead.
     dead: parking_lot::Mutex<Vec<TaskId>>,
 }
@@ -151,6 +169,8 @@ impl FakeWorkspaces {
             fail_next: parking_lot::Mutex::new(false),
             integration: parking_lot::Mutex::new(None),
             landed: parking_lot::Mutex::new(false),
+            idle: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            nudged: parking_lot::Mutex::new(Vec::new()),
             dead: parking_lot::Mutex::new(Vec::new()),
         }
     }
@@ -158,6 +178,15 @@ impl FakeWorkspaces {
     /// Simulates an agent dying without reporting anything.
     pub fn kill_agent(&self, task_id: TaskId) {
         self.dead.lock().push(task_id);
+    }
+
+    /// Pretends an agent has been silent for this long.
+    pub fn set_idle(&self, task_id: TaskId, how_long: std::time::Duration) {
+        self.idle.lock().insert(task_id, how_long);
+    }
+
+    pub fn nudges(&self) -> Vec<TaskId> {
+        self.nudged.lock().clone()
     }
 
     pub fn has_landed(&self) -> bool {
@@ -226,6 +255,15 @@ impl Workspaces for FakeWorkspaces {
             return Some(false);
         }
         self.worktrees.lock().contains_key(&task_id).then_some(true)
+    }
+
+    fn idle_for(&self, task_id: TaskId) -> Option<std::time::Duration> {
+        self.idle.lock().get(&task_id).copied()
+    }
+
+    async fn nudge(&self, task_id: TaskId, _message: &str) -> bool {
+        self.nudged.lock().push(task_id);
+        true
     }
 
     async fn land(&self) -> deck_core::git::LandOutcome {

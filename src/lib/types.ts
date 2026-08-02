@@ -1,3 +1,16 @@
+/** The destinations in the left rail. */
+export type NavTab =
+  | "team"
+  | "workspace"
+  | "graph"
+  | "diffs"
+  | "decisions"
+  | "supervisor"
+  | "memory"
+  | "skills"
+  | "files"
+  | "advanced";
+
 // Mirrors deck-core's serde representation. Hand-written for now; once IPC payload types
 // settle, ts-rs generates this and the duplication goes away.
 

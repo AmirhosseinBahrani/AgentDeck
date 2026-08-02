@@ -51,15 +51,15 @@ export function RevokeAgent({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-deck-text/25 backdrop-blur-sm">
       <div className="glass animate-rise flex w-[520px] flex-col rounded-[14px]">
-        <header className="border-b border-white/[0.07] px-6 pt-5 pb-4">
+        <header className="border-b border-deck-line px-6 pt-5 pb-4">
           <div className="flex items-center gap-2.5">
             <h2 className="text-[19px] font-semibold tracking-tight text-deck-text">
               Revoke {agent.name}
             </h2>
             {agent.status === "blocked" && (
-              <span className="flex h-5 items-center gap-1.5 rounded-full bg-deck-attention/[0.14] px-2">
+              <span className="flex h-5 items-center gap-1.5 rounded-full bg-deck-attention-wash px-2">
                 <span className="size-1.5 rounded-full bg-deck-attention" />
                 <span className="text-[10px] font-semibold tracking-[0.06em] text-deck-attention">
                   BLOCKED
@@ -90,7 +90,9 @@ export function RevokeAgent({
           {/* Not offered as a choice. Returning tasks to an unassigned backlog would stall the
               run until somebody noticed, whereas the supervisor reassigns on its next iteration
               and keeps the dependency graph intact. */}
-          <p className="rounded-md border border-deck-live/25 bg-deck-live/[0.06] px-3 py-2.5 text-[11.5px] leading-relaxed text-deck-dim">
+          {/* Neutral rather than teal: nothing here is running. Teal now means an agent is
+              working, and a green panel beside a destructive button would say the opposite. */}
+          <p className="rounded-md border border-deck-line bg-deck-surface px-3 py-2.5 text-[11.5px] leading-relaxed text-deck-dim">
             Anything it was working on goes back to the supervisor, which reassigns it next
             iteration with the dependency graph intact. The branch and worktree are kept, so
             uncommitted work survives.
@@ -98,7 +100,7 @@ export function RevokeAgent({
           {error && <div className="mt-3 text-[11.5px] text-deck-danger">{error}</div>}
         </div>
 
-        <footer className="mt-5 flex items-center gap-3 border-t border-white/[0.07] bg-white/[0.02] px-6 py-4">
+        <footer className="mt-5 flex items-center gap-3 border-t border-deck-line bg-deck-surface px-6 py-4">
           <span className="grow text-[11.5px] leading-relaxed text-deck-faint">
             Reversible — hiring this role again picks up the same seat and its history.
           </span>

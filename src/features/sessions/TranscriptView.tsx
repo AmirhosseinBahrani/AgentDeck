@@ -79,7 +79,7 @@ export function TranscriptView({ sessionId }: { sessionId: string | null }) {
       {!pinned && (
         <button
           onClick={() => setPinned(true)}
-          className="absolute right-4 bottom-4 rounded-md border border-white/[0.1] bg-deck-raised px-3 py-1.5 text-xs text-deck-text shadow-lg transition-colors hover:bg-white/[0.14]"
+          className="absolute right-4 bottom-4 rounded-md border border-deck-line-strong bg-deck-raised px-3 py-1.5 text-xs text-deck-text shadow-lg transition-colors hover:border-deck-accent hover:text-deck-accent"
         >
           Jump to latest
         </button>
@@ -111,7 +111,7 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
 
     case "tool_call":
       return (
-        <div className="my-1 rounded-md border border-white/[0.07] bg-white/[0.04] px-2.5 py-1.5">
+        <div className="my-1 rounded-md border border-deck-line bg-deck-surface px-2.5 py-1.5">
           <div className="mb-0.5 font-mono text-[11px] tracking-wide text-deck-live">{row.tool}</div>
           <pre className="overflow-x-auto font-mono text-[11px] text-deck-dim">
             {truncate(JSON.stringify(row.input, null, 2), 600)}
@@ -125,7 +125,7 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
           className={`my-1 rounded border px-2.5 py-1.5 ${
             row.isError
               ? "border-deck-danger/35 bg-deck-danger/10"
-              : "border-white/[0.06] bg-white/[0.025]"
+              : "border-deck-line bg-deck-surface"
           }`}
         >
           <pre
@@ -140,7 +140,7 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
 
     case "permission":
       return (
-        <div className="my-1 rounded border border-deck-attention/30 bg-deck-attention/8 px-2.5 py-2">
+        <div className="my-1 rounded border border-deck-attention/30 bg-deck-attention-wash px-2.5 py-2">
           <div className="text-[12px] font-medium text-deck-attention">
             Permission required: {row.tool}
           </div>
@@ -153,13 +153,13 @@ const Row = memo(function Row({ row }: { row: TranscriptRow }) {
     case "turn":
       return (
         <div className="flex items-center gap-2 py-1 text-[11px] text-deck-faint">
-          <div className="h-px flex-1 bg-white/8" />
+          <div className="h-px flex-1 bg-deck-line" />
           <span>
             turn complete
             {row.costUsd !== null && ` · $${row.costUsd.toFixed(4)}`}
             {row.isError && " · error"}
           </span>
-          <div className="h-px flex-1 bg-white/8" />
+          <div className="h-px flex-1 bg-deck-line" />
         </div>
       );
 

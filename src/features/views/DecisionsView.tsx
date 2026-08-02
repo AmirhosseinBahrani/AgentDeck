@@ -46,7 +46,7 @@ export function DecisionsView({ snapshot }: { snapshot: RunSnapshot | null }) {
           {decisions.map((d, i) => (
             <div
               key={i}
-              className="flex gap-4 border-b border-white/[0.05] py-2.5 last:border-b-0"
+              className="flex gap-4 border-b border-deck-line py-2.5 last:border-b-0"
             >
               <span className="w-10 shrink-0 pt-0.5 font-mono text-[10.5px] text-deck-faint">
                 #{d.iteration}
@@ -54,7 +54,7 @@ export function DecisionsView({ snapshot }: { snapshot: RunSnapshot | null }) {
               <span
                 className={cn(
                   "w-14 shrink-0 pt-0.5 font-mono text-[10.5px]",
-                  d.decided_by === "claude" && "text-deck-live",
+                  d.decided_by === "claude" && "text-deck-accent",
                   d.decided_by === "human" && "text-deck-attention",
                   d.decided_by === "code" && "text-deck-faint",
                 )}

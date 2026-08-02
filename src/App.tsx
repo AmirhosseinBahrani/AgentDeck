@@ -193,7 +193,7 @@ function Deck() {
         />
       )}
 
-      <footer className="flex h-6 shrink-0 items-center gap-4 border-t border-white/[0.06] px-3 font-mono text-[10px] text-deck-faint">
+      <footer className="flex h-6 shrink-0 items-center gap-4 border-t border-deck-line px-3 font-mono text-[10px] text-deck-faint">
         <span>{snapshot?.engaged ?? 0} running</span>
         <span>{snapshot?.agents.length ?? 0} agents</span>
         <span>{snapshot?.tasks.length ?? 0} tasks</span>

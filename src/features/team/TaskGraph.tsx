@@ -71,11 +71,13 @@ function GraphNode({
       disabled={!task.session_id}
       className={cn(
         "flex w-[152px] flex-col gap-1 rounded-lg border px-2.5 py-2 text-left transition-colors",
-        starting && "ring-live animate-live border-deck-live/60 bg-deck-live/[0.14]",
-        running && !starting && "border-deck-live/40 bg-deck-live/[0.09]",
-        blocked && "border-deck-attention/40 bg-deck-attention/[0.09]",
-        done && "border-white/[0.07] bg-white/[0.03]",
-        !starting && !running && !blocked && !done && "border-white/[0.06] bg-white/[0.015]",
+        // Teal on these nodes is state — the task is running, or about to. The ring and the pulse
+        // are what separate a just-approved node from one already under way.
+        starting && "ring-live animate-live border-deck-live bg-deck-live-wash",
+        running && !starting && "border-deck-live/40 bg-deck-live-wash",
+        blocked && "border-deck-attention/40 bg-deck-attention-wash",
+        done && "border-deck-line bg-deck-surface",
+        !starting && !running && !blocked && !done && "border-deck-line bg-deck-bg",
         task.session_id ? "cursor-pointer hover:brightness-125" : "cursor-default",
       )}
     >

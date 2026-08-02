@@ -72,7 +72,7 @@ export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
         <Turn key={e.id} tone="attention" who="Asking you">
           <p className="text-[13px] leading-5 text-deck-text">{e.question}</p>
           {e.detail && (
-            <pre className="mt-2 max-h-32 overflow-y-auto rounded bg-black/30 p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-deck-dim">
+            <pre className="mt-2 max-h-32 overflow-y-auto rounded bg-deck-surface p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-deck-dim">
               {e.detail}
             </pre>
           )}
@@ -85,7 +85,7 @@ export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
       {decisions.map((d, i) => (
         <Turn
           key={i}
-          tone={d.decided_by === "claude" ? "live" : "neutral"}
+          tone={d.decided_by === "claude" ? "accent" : "neutral"}
           who={d.decided_by === "claude" ? "Claude" : d.decided_by === "human" ? "You" : "Code"}
           meta={`${d.stage} · iteration ${d.iteration}${d.repaired ? " · repaired" : ""}`}
         >
@@ -98,7 +98,7 @@ export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
         </Turn>
       ))}
 
-      <div className="sticky bottom-0 mt-2 flex shrink-0 flex-col gap-2 rounded-[var(--radius-panel)] border border-white/[0.08] bg-deck-base/95 p-3 backdrop-blur-xl">
+      <div className="sticky bottom-0 mt-2 flex shrink-0 flex-col gap-2 rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface p-3">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -116,7 +116,7 @@ export function SupervisorView({ snapshot }: { snapshot: RunSnapshot | null }) {
               ? "Break tasks down further · always run pytest, not unittest · give the reviewer the schema work"
               : "Start a run before guiding it."
           }
-          className="w-full resize-none rounded-md border border-white/10 bg-black/30 px-3 py-2 text-[12.5px] leading-relaxed text-deck-text placeholder:text-deck-faint focus:border-deck-live/50 focus:outline-none disabled:opacity-50"
+          className="w-full resize-none rounded-md border border-deck-line bg-deck-bg px-3 py-2 text-[12.5px] leading-relaxed text-deck-text placeholder:text-deck-faint focus:border-deck-accent focus:outline-none disabled:opacity-50"
         />
         <div className="flex items-center gap-2">
           {/* Says where guidance reaches, next to the box. Somebody will type "skip the tests",
@@ -157,7 +157,8 @@ function Turn({
 }: {
   who: string;
   meta?: string;
-  tone: "live" | "attention" | "neutral";
+  // Claude's turns are accent rather than live: this is who spoke, not something still running.
+  tone: "accent" | "attention" | "neutral";
   children: React.ReactNode;
 }) {
   return (
@@ -165,10 +166,10 @@ function Turn({
       <span
         className={cn(
           "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md border",
-          tone === "live" && "border-deck-live/30 bg-deck-live/[0.12] text-deck-live",
+          tone === "accent" && "border-deck-accent/30 bg-deck-accent-wash text-deck-accent",
           tone === "attention" &&
-            "border-deck-attention/30 bg-deck-attention/[0.12] text-deck-attention",
-          tone === "neutral" && "border-white/[0.08] bg-white/[0.04] text-deck-faint",
+            "border-deck-attention/30 bg-deck-attention-wash text-deck-attention",
+          tone === "neutral" && "border-deck-line bg-deck-surface text-deck-faint",
         )}
       >
         {who === "You" ? <User className="size-3.5" /> : <Bot className="size-3.5" />}
@@ -178,7 +179,7 @@ function Turn({
           <span
             className={cn(
               "text-[11.5px] font-medium",
-              tone === "live" && "text-deck-live",
+              tone === "accent" && "text-deck-accent",
               tone === "attention" && "text-deck-attention",
               tone === "neutral" && "text-deck-dim",
             )}

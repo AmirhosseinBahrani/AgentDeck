@@ -7,7 +7,7 @@ const badgeVariants = cva(
   {
     variants: {
       tone: {
-        neutral: "bg-white/8 text-deck-dim",
+        neutral: "bg-deck-raised text-deck-dim",
         live: "bg-deck-live/14 text-deck-live",
         attention: "bg-deck-attention/16 text-deck-attention",
         danger: "bg-deck-danger/16 text-deck-danger",

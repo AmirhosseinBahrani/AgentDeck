@@ -1,5 +1,6 @@
-import { FolderGit2, Loader2, Search } from "lucide-react";
+import { FolderGit2, Loader2, Moon, Search, Sun } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTheme } from "../../lib/theme";
 import type { Autonomy } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
@@ -30,7 +31,7 @@ export function TitleBar({
   return (
     <header
       data-tauri-drag-region
-      className="glass-flat flex h-[46px] shrink-0 items-center gap-4 border-b border-white/[0.07] px-4"
+      className="glass-flat flex h-[46px] shrink-0 items-center gap-4 border-b border-deck-line px-4"
     >
       {/* Inset traffic lights: the window is frameless so the content can reach the top edge,
           which means the buttons have to be reserved space rather than drawn by the OS. */}
@@ -38,10 +39,11 @@ export function TitleBar({
 
       <div className="flex items-center gap-2.5">
         {/* The hub and its eight workers: the org model the whole app is built on, which is
-            also what the app icon shows. */}
+            also what the app icon shows. Drawn in the accent rather than the live teal — a mark
+            that is always on screen must not read as a run that is always in progress. */}
         <svg width="16" height="16" viewBox="0 0 16 16" className="shrink-0">
           <g
-            stroke="var(--color-deck-live)"
+            stroke="var(--color-deck-accent)"
             strokeWidth="1.15"
             strokeLinecap="round"
             fill="none"
@@ -64,21 +66,21 @@ export function TitleBar({
           <circle cx="3.69" cy="3.69" r="1.15" />
             <circle cx="8" cy="8" r="2.9" />
           </g>
-          <circle cx="8" cy="8" r="1.5" fill="var(--color-deck-live)" />
+          <circle cx="8" cy="8" r="1.5" fill="var(--color-deck-accent)" />
         </svg>
         <span className="text-[13px] font-semibold tracking-[-0.01em] text-deck-text">
           AgentDeck
         </span>
       </div>
 
-      <div className="h-4 w-px shrink-0 bg-white/10" />
+      <div className="h-4 w-px shrink-0 bg-deck-line-strong" />
 
       {/* The project, not the objective. This is the one piece of context that is true between
           runs, and it doubles as the way to change it — there is nowhere else that would be. */}
       <button
         onClick={onChangeProject}
         title={projectPath ?? "Choose a repository for agents to work in"}
-        className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-white/[0.06]"
+        className="flex min-w-0 items-center gap-1.5 rounded px-1.5 py-0.5 transition-colors hover:bg-deck-raised"
       >
         <FolderGit2 className="size-3 shrink-0 text-deck-faint" />
         <span className="truncate font-mono text-[11px] text-deck-dim">{project}</span>
@@ -90,7 +92,9 @@ export function TitleBar({
 
       <AutonomyPill mode={autonomy} running={running} />
 
-      <label className="flex h-[27px] w-[200px] shrink-0 items-center gap-2 rounded-md border border-white/[0.08] bg-white/[0.04] px-2.5">
+      <ThemeToggle />
+
+      <label className="flex h-[27px] w-[200px] shrink-0 items-center gap-2 rounded-md border border-deck-line bg-deck-bg px-2.5">
         <Search className="size-3 shrink-0 text-deck-faint" />
         <input
           placeholder="Search everything"
@@ -99,6 +103,29 @@ export function TitleBar({
         <kbd className="shrink-0 font-mono text-[10px] text-deck-faint">⌘K</kbd>
       </label>
     </header>
+  );
+}
+
+/**
+ * Light or dark, as a preference rather than a control.
+ *
+ * Ghost-quiet and unlabelled: it sits in the same bar as the run status and the autonomy mode,
+ * and anything with a fill or an accent here would compete with the two things that actually
+ * report on the work. The icon names the theme you are in, which is what someone checks when
+ * they glance at it — the destination lives in the tooltip.
+ */
+function ThemeToggle() {
+  const [theme, setTheme] = useTheme();
+  const dark = theme === "dark";
+
+  return (
+    <button
+      onClick={() => setTheme(dark ? "light" : "dark")}
+      title={dark ? "Dark theme — switch to light" : "Light theme — switch to dark"}
+      className="flex size-[27px] shrink-0 items-center justify-center rounded-md text-deck-faint transition-colors hover:bg-deck-raised hover:text-deck-dim"
+    >
+      {dark ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}
+    </button>
   );
 }
 
@@ -125,7 +152,7 @@ function RunStatus({ phase, startedAt }: { phase: string; startedAt: number }) {
   return (
     <span
       title="What the supervisor is doing, and how long the run has been going"
-      className="flex h-[26px] items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.04] px-[11px]"
+      className="flex h-[26px] items-center gap-2 rounded-full border border-deck-line bg-deck-bg px-[11px]"
     >
       {busy && <Loader2 className="size-3 shrink-0 animate-spin text-deck-live" />}
       <span className="font-mono text-[10.5px] tracking-[0.04em] text-deck-dim">

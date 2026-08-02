@@ -84,8 +84,10 @@ export function ProjectSwitcher({
               title={project.path}
               className={cn(
                 "flex h-8 items-center gap-2 rounded-md px-2 text-left transition-colors",
-                active && "bg-deck-live/[0.09] ring-1 ring-deck-live/25",
-                !active && project.exists && "hover:bg-white/[0.05]",
+                // Selection is interaction, not a running state, so the active project takes
+                // cobalt. Teal here would read as "this repository is busy".
+                active && "bg-deck-accent-wash ring-1 ring-deck-accent/30",
+                !active && project.exists && "hover:bg-deck-surface",
                 !project.exists && "opacity-50",
               )}
             >
@@ -93,7 +95,7 @@ export function ProjectSwitcher({
                 <FolderGit2
                   className={cn(
                     "size-3.5 shrink-0",
-                    active ? "text-deck-live" : "text-deck-faint",
+                    active ? "text-deck-accent" : "text-deck-faint",
                   )}
                 />
               ) : (
@@ -110,7 +112,7 @@ export function ProjectSwitcher({
               {!project.exists && (
                 <span className="shrink-0 font-mono text-[10px] text-deck-attention">moved</span>
               )}
-              {active && <Check className="size-3 shrink-0 text-deck-live" />}
+              {active && <Check className="size-3 shrink-0 text-deck-accent" />}
             </button>
           );
         })}
@@ -210,7 +212,7 @@ function NewProject({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-[var(--radius-panel)] border border-white/[0.08] bg-white/[0.025] p-3">
+    <div className="flex flex-col gap-2 rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface p-3">
       <Input
         autoFocus
         value={name}
@@ -232,7 +234,7 @@ function NewProject({
           }}
           rows={2}
           placeholder="What should the team build first? (optional)"
-          className="min-w-0 grow resize-none rounded-md border border-white/[0.08] bg-white/[0.03] px-2.5 py-2 text-[12.5px] leading-[18px] text-deck-text placeholder:text-deck-faint focus:border-white/[0.16] focus:outline-none"
+          className="min-w-0 grow resize-none rounded-md border border-deck-line bg-deck-surface px-2.5 py-2 text-[12.5px] leading-[18px] text-deck-text placeholder:text-deck-faint focus:border-deck-accent focus:outline-none"
         />
         <Button
           variant="primary"

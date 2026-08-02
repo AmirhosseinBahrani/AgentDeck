@@ -49,7 +49,8 @@ export function RuntimeGate({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-8 text-deck-text">
       <div className="animate-rise w-full max-w-lg">
-        <div className="mb-5 flex items-center gap-2 text-deck-live">
+        {/* Accent, not the live teal: this is the product's mark, and nothing is running yet. */}
+        <div className="mb-5 flex items-center gap-2 text-deck-accent">
           <Boxes className="size-5" />
           <span className="text-[14px] font-semibold tracking-tight">AgentDeck</span>
         </div>
@@ -131,9 +132,11 @@ function Fix({
       <p className="mt-1.5 text-[11.5px] leading-relaxed text-deck-dim">{detail}</p>
       {/* The command is the whole point of this screen, so it is set as one: selectable, in
           monospace, visually separated from the prose explaining it. */}
-      <div className="mt-3 flex items-center gap-2 rounded-md border border-white/8 bg-black/40 px-2.5 py-2">
+      <div className="mt-3 flex items-center gap-2 rounded-md border border-deck-line bg-deck-surface px-2.5 py-2">
         <TerminalSquare className="size-3.5 shrink-0 text-deck-faint" />
-        <code className="font-mono text-[11.5px] text-deck-live select-all">{command}</code>
+        {/* Full-strength text, not a colour: the command is content to copy, and the inset
+            monospace block already separates it from the prose. */}
+        <code className="font-mono text-[11.5px] text-deck-text select-all">{command}</code>
       </div>
     </>
   );

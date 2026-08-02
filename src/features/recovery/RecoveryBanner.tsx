@@ -67,7 +67,7 @@ export function RecoveryBanner() {
   }
 
   return (
-    <div className="animate-rise shrink-0 border-b border-deck-attention/25 bg-deck-attention/8 px-4 py-2 text-[11px]">
+    <div className="animate-rise shrink-0 border-b border-deck-attention/25 bg-deck-attention-tint px-4 py-2 text-[11px]">
       <div className="flex items-center gap-2">
         <TriangleAlert className="size-3.5 shrink-0 text-deck-attention" />
         <span className="font-medium text-deck-attention">

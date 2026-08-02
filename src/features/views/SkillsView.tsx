@@ -112,7 +112,7 @@ export function SkillsView({ project }: { project: string | null }) {
               key={skill.id}
               className={cn(
                 "flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
-                draft?.id === skill.id ? "bg-white/[0.07]" : "hover:bg-white/[0.04]",
+                draft?.id === skill.id ? "bg-deck-accent-wash" : "hover:bg-deck-surface",
               )}
             >
               {/* The toggle is deliberately not inside the row's own click target: turning a
@@ -123,7 +123,7 @@ export function SkillsView({ project }: { project: string | null }) {
                 checked={skill.enabled}
                 onChange={() => void save({ ...skill, enabled: !skill.enabled })}
                 title={skill.enabled ? "Sent to every agent" : "Kept, but not sent"}
-                className="size-3 shrink-0 accent-[var(--color-deck-live)]"
+                className="size-3 shrink-0 accent-[var(--color-deck-accent)]"
               />
               <button
                 onClick={() => setDraft(skill)}
@@ -172,7 +172,7 @@ export function SkillsView({ project }: { project: string | null }) {
 
       <div className="flex min-w-0 grow flex-col gap-3">
         {error && (
-          <p className="rounded-md border border-deck-attention/30 bg-deck-attention/[0.08] px-3 py-2 text-[11.5px] text-deck-attention">
+          <p className="rounded-md border border-deck-attention/30 bg-deck-attention-wash px-3 py-2 text-[11.5px] text-deck-attention">
             {error}
           </p>
         )}
@@ -248,7 +248,7 @@ function SkillEditor({
           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
           spellCheck={false}
           placeholder={"Write the SQL by hand in crates/deck-core/migrations.\nNumber it sequentially. Never edit a migration that has shipped."}
-          className="min-h-0 grow resize-none rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.02] p-4 font-mono text-[12px] leading-[19px] text-deck-text placeholder:text-deck-faint/70 focus:border-white/[0.14] focus:outline-none"
+          className="min-h-0 grow resize-none rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface p-4 font-mono text-[12px] leading-[19px] text-deck-text placeholder:text-deck-faint/70 focus:border-deck-accent focus:outline-none"
         />
       </label>
     </div>

@@ -6,40 +6,124 @@
 @import "@fontsource-variable/jetbrains-mono";
 
 /*
- * AgentDeck — glass cockpit.
+ * AgentDeck — editorial control surface.
  *
- * The product is a control surface for processes that edit real files and spend a real usage
- * allowance. So the visual language is an instrument panel: layered translucency over a dark
- * living background, hairline edges that catch light, telemetry set in monospace.
+ * The product runs processes that edit real files and spend a real usage allowance, so the
+ * visual language is a printed instrument panel: information sitting directly on the ground with
+ * hairline rules rather than boxed in cards, set in a grotesk, with monospace for anything a
+ * machine produced.
  *
- * Colour carries meaning and is never decorative:
- *   teal  — a machine is working; nothing is required of you
- *   amber — a human is required; the only colour allowed to interrupt
- *   red   — destructive, and only on something you are about to do
- * Everything else is greyscale, which is what lets those three read instantly across a dense
- * screen. A palette where everything is coloured says nothing.
+ * Colour is spent on two separate jobs and they must never be confused:
+ *
+ *   accent (cobalt)          — interactive. The active view, the one primary action, focus.
+ *   live / attention / danger — state. What an agent is doing, and whether it needs you.
+ *
+ * The previous palette used one teal for both, which is why a running agent and a clickable
+ * button looked alike. Reserving cobalt for interaction is what lets the state colours read
+ * instantly: if it is coloured and not blue, it is telling you something rather than inviting a
+ * click.
  */
-@theme {
+
+/*
+ * A theme is two value sets behind one set of names.
+ *
+ * Components reference the role (`--deck-text`), never the value, so switching themes is this
+ * block and nothing else. `color-scheme` is not decoration — it is what makes the caret, native
+ * controls and the default scrollbar follow along.
+ */
+:root {
+  color-scheme: light;
+
+  --deck-bg: #ffffff;
+  --deck-surface: #f7f8fa;
+  --deck-raised: #eef0f4;
+  --deck-line: #e3e6eb;
+  --deck-line-strong: #cbd1da;
+
+  --deck-text: #0c0e13;
+  --deck-dim: #5b6471;
+  --deck-faint: #8a929e;
+
+  --deck-accent: #1f4be0;
+  --deck-accent-wash: #eef2fe;
+  --deck-on-accent: #ffffff;
+
+  --deck-live: #0e7c66;
+  --deck-live-wash: #e6f4f0;
+  --deck-attention: #b0770b;
+  --deck-attention-wash: #faedd4;
+  --deck-attention-tint: #fdf8ee;
+  --deck-danger: #c0392b;
+  --deck-done: #0e7c66;
+
+  --deck-shadow: 0 1px 2px rgb(12 14 19 / 0.06), 0 4px 12px -6px rgb(12 14 19 / 0.1);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --deck-bg: #0b0d11;
+  --deck-surface: #12151b;
+  --deck-raised: #191d25;
+  --deck-line: #232830;
+  --deck-line-strong: #343b46;
+
+  --deck-text: #f2f4f7;
+  --deck-dim: #98a1ae;
+  --deck-faint: #6b7484;
+
+  /* Lifted, not the same blue. #1F4BE0 on this ground is unreadable, and the text sitting on the
+     fill has to go dark for the same reason — a naive inversion produces a button nobody can
+     read. */
+  --deck-accent: #6e96ff;
+  --deck-accent-wash: #161e33;
+  --deck-on-accent: #08101f;
+
+  --deck-live: #3dd9ae;
+  --deck-live-wash: #10241f;
+  --deck-attention: #e8b14c;
+  --deck-attention-wash: #2a2113;
+  --deck-attention-tint: #1a160e;
+  --deck-danger: #ff6b5b;
+  --deck-done: #3dd9ae;
+
+  --deck-shadow: 0 1px 2px rgb(0 0 0 / 0.5), 0 4px 12px -6px rgb(0 0 0 / 0.6);
+}
+
+/*
+ * `inline` matters here. Without it Tailwind resolves these once at build time and both themes
+ * collapse to whichever value `:root` held, so the dark class would change nothing.
+ */
+@theme inline {
   --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* Desaturated blue-slate rather than neutral grey: under translucent panels a true grey
-     turns muddy, while a slight blue cast stays clean as layers stack. */
-  --color-deck-void: oklch(0.145 0.012 255);
-  --color-deck-base: oklch(0.185 0.014 255);
-  --color-deck-raised: oklch(0.235 0.014 255);
-  --color-deck-line: oklch(0.32 0.014 255);
+  --color-deck-bg: var(--deck-bg);
+  --color-deck-void: var(--deck-bg);
+  --color-deck-surface: var(--deck-surface);
+  --color-deck-base: var(--deck-surface);
+  --color-deck-raised: var(--deck-raised);
+  --color-deck-line: var(--deck-line);
+  --color-deck-line-strong: var(--deck-line-strong);
 
-  --color-deck-text: oklch(0.93 0.006 255);
-  --color-deck-dim: oklch(0.68 0.012 255);
-  --color-deck-faint: oklch(0.52 0.012 255);
+  --color-deck-text: var(--deck-text);
+  --color-deck-dim: var(--deck-dim);
+  --color-deck-faint: var(--deck-faint);
 
-  --color-deck-live: oklch(0.78 0.13 195);
-  --color-deck-attention: oklch(0.8 0.15 78);
-  --color-deck-danger: oklch(0.68 0.19 25);
-  --color-deck-done: oklch(0.72 0.14 155);
+  --color-deck-accent: var(--deck-accent);
+  --color-deck-accent-wash: var(--deck-accent-wash);
+  --color-deck-on-accent: var(--deck-on-accent);
+
+  --color-deck-live: var(--deck-live);
+  --color-deck-live-wash: var(--deck-live-wash);
+  --color-deck-attention: var(--deck-attention);
+  --color-deck-attention-wash: var(--deck-attention-wash);
+  --color-deck-attention-tint: var(--deck-attention-tint);
+  --color-deck-danger: var(--deck-danger);
+  --color-deck-done: var(--deck-done);
 
   --radius-panel: 10px;
+  --radius-row: 7px;
 }
 
 html,
@@ -52,8 +136,8 @@ body,
 body {
   font-family: var(--font-sans);
   font-size: 13px;
-  color: var(--color-deck-text);
-  background: var(--color-deck-void);
+  color: var(--deck-text);
+  background: var(--deck-bg);
   /* Counters and costs sit in columns; proportional digits make them jitter as they update. */
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
@@ -65,92 +149,51 @@ body {
   overflow: hidden;
   position: relative;
   isolation: isolate;
-}
-
-/*
- * Atmosphere. Two very low-opacity blooms behind everything.
- *
- * Glass over a flat fill reads as a grey rectangle — the blur needs something underneath with
- * variation to actually reveal. Fixed and non-interactive, so it costs one composited layer
- * and never repaints.
- */
-#root::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background:
-    radial-gradient(60rem 40rem at 12% -10%, oklch(0.5 0.11 205 / 0.16), transparent 60%),
-    radial-gradient(50rem 36rem at 105% 108%, oklch(0.5 0.1 60 / 0.1), transparent 62%),
-    var(--color-deck-void);
-}
-
-/*
- * Grain. Without it, large translucent surfaces on a near-black ground show visible gradient
- * banding, and the glass reads as plastic.
- */
-#root::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.3;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  background: var(--deck-bg);
 }
 
 @layer components {
   /*
-   * The glass surface.
+   * Panel surfaces.
    *
-   * The inset top highlight is what sells it: a real pane catches light along its top edge, and
-   * without that line a blurred panel just looks out of focus.
-   *
-   * Deliberately reserved for large, stable surfaces. `backdrop-filter` is expensive and this
-   * app streams high-frequency events into a virtualised list — glass on individual rows would
-   * cost frames continuously for an effect nobody can see at 28px tall.
+   * Flat fills and hairline rules rather than the previous blur. Translucency needs something
+   * varied behind it to read as glass, and on a paper ground there is nothing to reveal — it
+   * just turns grey. It also cost a `backdrop-filter` on surfaces sitting behind a virtualised
+   * list streaming events, which is a continuous frame cost for an effect nobody can see.
    */
   .glass {
-    background: linear-gradient(to bottom, oklch(1 0 0 / 0.055), oklch(1 0 0 / 0.022));
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-    border: 1px solid oklch(1 0 0 / 0.08);
-    box-shadow:
-      inset 0 1px 0 oklch(1 0 0 / 0.07),
-      0 1px 2px oklch(0 0 0 / 0.4),
-      0 8px 24px -12px oklch(0 0 0 / 0.5);
+    background: var(--deck-bg);
+    border: 1px solid var(--deck-line);
+    box-shadow: var(--deck-shadow);
   }
 
   /* For panels flush against each other, where a full border would double up. */
   .glass-flat {
-    background: oklch(1 0 0 / 0.028);
-    backdrop-filter: blur(16px) saturate(130%);
-    -webkit-backdrop-filter: blur(16px) saturate(130%);
+    background: var(--deck-surface);
   }
 
-  /* Rows inside a panel: cheap, no blur, still layered. */
   .card-row {
-    background: oklch(1 0 0 / 0.028);
-    border: 1px solid oklch(1 0 0 / 0.06);
-    border-radius: 7px;
+    background: var(--deck-bg);
+    border: 1px solid var(--deck-line);
+    border-radius: var(--radius-row);
     transition:
-      background-color 140ms ease,
-      border-color 140ms ease;
+      background-color 120ms ease,
+      border-color 120ms ease;
   }
 
   .card-row:hover {
-    background: oklch(1 0 0 / 0.055);
-    border-color: oklch(1 0 0 / 0.11);
+    background: var(--deck-surface);
+    border-color: var(--deck-line-strong);
   }
 
   /* Uppercase with wide tracking is the instrument-panel convention, and it separates a section
      name from its data without needing a heavier weight or a rule. */
   .label-micro {
-    font-size: 9.5px;
+    font-size: 10px;
     font-weight: 600;
     letter-spacing: 0.09em;
     text-transform: uppercase;
-    color: var(--color-deck-faint);
+    color: var(--deck-faint);
   }
 }
 
@@ -189,29 +232,28 @@ body {
   }
 
   .ring-live {
-    box-shadow: 0 0 0 3px oklch(0.78 0.13 195 / 0.16);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--deck-live) 20%, transparent);
   }
 
   .ring-attention {
-    box-shadow: 0 0 0 3px oklch(0.8 0.15 78 / 0.18);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--deck-attention) 22%, transparent);
   }
 }
 
-/* The default macOS overlay scrollbar is invisible against glass. */
 ::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: oklch(1 0 0 / 0.1);
+  background: var(--deck-line-strong);
   border-radius: 99px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(1 0 0 / 0.2);
+  background: var(--deck-faint);
   background-clip: content-box;
 }
 
@@ -220,7 +262,7 @@ body {
 }
 
 *:focus-visible {
-  outline: 2px solid var(--color-deck-live);
+  outline: 2px solid var(--deck-accent);
   outline-offset: 1px;
 }
 

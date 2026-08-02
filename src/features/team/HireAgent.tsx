@@ -86,9 +86,9 @@ export function HireAgent({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-deck-text/25 backdrop-blur-sm">
       <div className="glass animate-rise flex w-[560px] flex-col rounded-[14px]">
-        <header className="border-b border-white/[0.07] px-6 pt-5 pb-4">
+        <header className="border-b border-deck-line px-6 pt-5 pb-4">
           <h2 className="text-[19px] font-semibold tracking-tight text-deck-text">
             Hire an agent
           </h2>
@@ -112,8 +112,9 @@ export function HireAgent({
                   className={cn(
                     "rounded-md border px-2.5 py-1 text-[11.5px] transition-colors",
                     name === t.name && t.name
-                      ? "border-deck-live/40 bg-deck-live/[0.12] text-deck-live"
-                      : "border-white/[0.09] bg-white/[0.04] text-deck-dim hover:text-deck-text",
+                      ? // The picked template is a selection, so cobalt.
+                        "border-deck-accent/40 bg-deck-accent-wash text-deck-accent"
+                      : "border-deck-line bg-deck-surface text-deck-dim hover:text-deck-text",
                   )}
                 >
                   {t.name || "Blank role"}
@@ -164,14 +165,14 @@ export function HireAgent({
               onChange={(e) => setPrompt(e.target.value)}
               rows={3}
               placeholder="Own schema, migrations and indexes. Never drop a column without raising a blocker."
-              className="w-full resize-none rounded-md border border-white/10 bg-black/25 px-3 py-2 text-[12.5px] leading-relaxed text-deck-text placeholder:text-deck-faint focus:border-deck-live/50 focus:outline-none"
+              className="w-full resize-none rounded-md border border-deck-line bg-deck-surface px-3 py-2 text-[12.5px] leading-relaxed text-deck-text placeholder:text-deck-faint focus:border-deck-accent focus:outline-none"
             />
           </Field>
 
           {/* Stated rather than configurable: containment is not per-agent policy. Every agent
               works in its own worktree and anything outside it goes through the permission
               prompt, which is what makes running them unattended defensible at all. */}
-          <p className="rounded-md border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-[11px] leading-relaxed text-deck-faint">
+          <p className="rounded-md border border-deck-line bg-deck-surface px-3 py-2 text-[11px] leading-relaxed text-deck-faint">
             Works in its own git worktree with edits auto-approved inside it. Anything reaching
             outside asks you first — the same containment every agent gets.
           </p>
@@ -179,7 +180,7 @@ export function HireAgent({
           {error && <div className="text-[11.5px] text-deck-danger">{error}</div>}
         </div>
 
-        <footer className="flex items-center gap-3 border-t border-white/[0.07] bg-white/[0.02] px-6 py-4">
+        <footer className="flex items-center gap-3 border-t border-deck-line bg-deck-surface px-6 py-4">
           <span className="grow text-[11.5px] leading-relaxed text-deck-faint">
             Nothing starts until the supervisor assigns it a task.
           </span>

@@ -72,15 +72,17 @@ function AgentRow({
       className={cn(
         "animate-rise flex items-center gap-4 rounded-[9px] border px-4 py-[11px] transition-colors",
         open
-          ? "cursor-pointer hover:brightness-125 focus-visible:ring-1 focus-visible:ring-deck-live/50 focus-visible:outline-none"
+          ? // Focus is interaction, so the ring is cobalt — the teal on this row means the agent
+            // is working, and the two must not be the same colour.
+            "cursor-pointer hover:brightness-125 focus-visible:ring-1 focus-visible:ring-deck-accent focus-visible:outline-none"
           : "cursor-default",
         blocked
-          ? "border-deck-attention/30 bg-deck-attention/[0.06]"
+          ? "border-deck-attention/30 bg-deck-attention-tint"
           : running
-            ? "border-white/[0.07] bg-white/[0.035] hover:bg-white/[0.055]"
+            ? "border-deck-line bg-deck-surface hover:bg-deck-raised"
             : // Idle and offline recede: they are on the team but not part of what is happening,
               // and giving them equal weight would make a busy screen harder to scan.
-              "border-white/[0.05] bg-white/[0.02] opacity-70",
+              "border-deck-line bg-deck-bg opacity-70",
       )}
       style={{ animationDelay: `${Math.min(index, 8) * 30}ms` }}
     >

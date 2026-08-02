@@ -79,7 +79,8 @@ export function ProjectGate({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-8">
       <div className="animate-rise w-full max-w-lg">
-        <div className="mb-5 flex items-center gap-2 text-deck-live">
+        {/* Accent, not the live teal: this is the product's mark, and nothing is running yet. */}
+        <div className="mb-5 flex items-center gap-2 text-deck-accent">
           <Boxes className="size-5" />
           <span className="text-[14px] font-semibold tracking-tight">AgentDeck</span>
         </div>
@@ -148,7 +149,7 @@ export function ConfirmInit({
               ? "Agents branch a worktree per task, and there is nothing to branch from yet."
               : "Agents work in git worktrees, so this folder needs to be a repository first."}
           </p>
-          <code className="mt-2 block truncate rounded bg-black/30 px-2 py-1.5 font-mono text-[10.5px] text-deck-faint">
+          <code className="mt-2 block truncate rounded bg-deck-surface px-2 py-1.5 font-mono text-[10.5px] text-deck-faint">
             {folder.path}
           </code>
           <p className="mt-2 text-[11px] leading-relaxed text-deck-faint">
@@ -257,7 +258,7 @@ export function useProjectPicker(onOpened: (project: ProjectInfo) => void) {
   }, [pending, onOpened]);
 
   const dialog = pending ? (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-8 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-deck-text/25 px-8 backdrop-blur-sm">
       <div className="w-full max-w-md">
         <ConfirmInit
           folder={pending}

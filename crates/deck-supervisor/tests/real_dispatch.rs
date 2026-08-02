@@ -475,3 +475,60 @@ async fn progress_is_recorded_but_does_not_move_the_task() {
         .iter()
         .any(|d| d.kind == "report_progress" && d.rationale.contains("halfway")));
 }
+
+#[tokio::test]
+async fn a_blocker_the_supervisor_can_route_becomes_a_fix_rather_than_a_question() {
+    // Reported from the app: an agent raised a blocker saying, in effect, "I cannot fix this —
+    // it belongs to the docs task", and the run stopped and offered the operator retry, abandon
+    // or end the run. All three are wrong; the agent had already named the work that was needed.
+    // A blocker now goes to the supervisor first, and only reaches a person if it cannot be
+    // turned into a job.
+    let root = workdir("blocker-routed");
+    let cfg = config(root.clone());
+    let planner = ScriptedPlanner::new();
+    planner.push(two_task_plan(), 0.10);
+    // Consumed by the fix-task decision when the blocker is routed.
+    planner.push(
+        json!({
+            "title": "Correct the documented command",
+            "role": "developer",
+            "description": "The README documents a command that is not installed.",
+            "verify_command": "true"
+        }),
+        0.02,
+    );
+
+    let workspaces = FakeWorkspaces::new(root);
+    let reports = Queued::new();
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_reports(&reports);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    let blocked = dispatched[0];
+    let before = run.graph.tasks().count();
+
+    reports.push(
+        blocked,
+        WorkerReport::RaiseBlocker {
+            reason: "Review-only: I cannot fix this; it belongs to the docs task.".into(),
+        },
+    );
+    driver.step(&mut run, true).await;
+
+    assert_eq!(
+        run.graph.tasks().count(),
+        before + 1,
+        "the blocker should have produced a task, not a question"
+    );
+    assert_eq!(
+        run.state.open_escalations, 0,
+        "nothing needed a person once the work was identified"
+    );
+    assert_ne!(
+        run.graph.get(blocked).unwrap().status,
+        TaskStatus::Blocked,
+        "the blocked task returns to the queue, behind its fix"
+    );
+}

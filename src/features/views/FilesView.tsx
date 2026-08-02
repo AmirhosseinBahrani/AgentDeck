@@ -106,7 +106,9 @@ export function FilesView({ project }: { project: string | null }) {
       {/* Placed here because this is the screen where its absence is felt: work that integrated
           but never landed leaves the folder looking as though the run produced nothing. */}
       {pending && (
-        <div className="flex items-center gap-3 rounded-[var(--radius-panel)] border border-deck-live/30 bg-deck-live/[0.07] px-3.5 py-2.5">
+        // Accent, not live: nothing is running here — the banner exists to offer the one action
+        // on this screen.
+        <div className="flex items-center gap-3 rounded-[var(--radius-panel)] border border-deck-accent/30 bg-deck-accent-wash px-3.5 py-2.5">
           <div className="flex min-w-0 grow flex-col gap-0.5">
             <span className="text-[12.5px] font-medium text-deck-text">
               There is integrated work that is not in this folder yet
@@ -144,7 +146,7 @@ export function FilesView({ project }: { project: string | null }) {
       {error && <p className="text-[11.5px] text-deck-danger">{error}</p>}
 
       <div className="flex min-h-0 grow gap-4">
-        <div className="flex w-[300px] shrink-0 flex-col overflow-y-auto rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.02] p-2">
+        <div className="flex w-[300px] shrink-0 flex-col overflow-y-auto rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface p-2">
           {root.length === 0 ? (
             <p className="px-2 py-1.5 text-[11.5px] leading-relaxed text-deck-faint">
               Nothing here yet. A run's work lands in this folder once its branches integrate.
@@ -167,7 +169,7 @@ export function FilesView({ project }: { project: string | null }) {
               <span className="mb-1.5 truncate font-mono text-[11px] text-deck-faint">
                 {selected}
               </span>
-              <pre className="min-h-0 grow overflow-auto rounded-[var(--radius-panel)] border border-white/[0.07] bg-black/25 p-3 font-mono text-[11.5px] leading-[18px] text-deck-dim">
+              <pre className="min-h-0 grow overflow-auto rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface p-3 font-mono text-[11.5px] leading-[18px] text-deck-dim">
                 {content ?? "Reading…"}
               </pre>
             </>
@@ -206,7 +208,7 @@ function Tree({
             style={{ paddingLeft: `${depth * 12 + 6}px` }}
             className={cn(
               "flex h-[26px] w-full items-center gap-1.5 rounded-md pr-2 text-left transition-colors",
-              selected === entry.path ? "bg-white/[0.07]" : "hover:bg-white/[0.05]",
+              selected === entry.path ? "bg-deck-accent-wash" : "hover:bg-deck-raised",
             )}
           >
             {entry.is_dir ? (
@@ -219,7 +221,7 @@ function Tree({
               <span className="w-3 shrink-0" />
             )}
             {entry.is_dir ? (
-              <Folder className="size-3 shrink-0 text-deck-live/70" />
+              <Folder className="size-3 shrink-0 text-deck-dim" />
             ) : (
               <File className="size-3 shrink-0 text-deck-faint" />
             )}

@@ -20,7 +20,7 @@ export function EscalationLayer() {
 
   return (
     <>
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-deck-attention/30 bg-deck-attention/[0.12] px-3">
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-deck-attention/30 bg-deck-attention-wash px-3">
         <ShieldAlert className="size-3.5 shrink-0 text-deck-attention" />
         <span className="text-[12px] text-deck-attention">
           {open.length === 1
@@ -68,15 +68,15 @@ function PermissionDialog({
   return (
     // Fixed, not absolute: this has to cover the viewport regardless of what it is nested in or
     // how far the transcript behind it has scrolled.
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-6 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-deck-text/25 p-6 backdrop-blur-sm">
       {/*
         Opaque, deliberately. This sits over a dense monospace transcript, and a translucent
         panel left the agent's own output legible straight through the question being asked —
         which is unreadable in exactly the moment that demands care. Blur alone is not enough
         behind high-contrast text.
       */}
-      <div className="animate-rise flex max-h-[80vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-deck-attention/25 bg-[#12161d] shadow-[0_32px_80px_-20px_rgba(0,0,0,0.85)]">
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/[0.08] bg-deck-attention/[0.07] px-4 py-3">
+      <div className="animate-rise flex max-h-[80vh] w-full max-w-xl flex-col overflow-hidden rounded-xl border border-deck-attention/25 bg-deck-bg shadow-[var(--deck-shadow)]">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-deck-line bg-deck-attention-tint px-4 py-3">
           <h2 className="flex items-center gap-2 text-[13px] font-semibold text-deck-text">
             <ShieldAlert className="size-4 text-deck-attention" />
             Permission required
@@ -98,7 +98,9 @@ function PermissionDialog({
 
         <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-4 py-3.5">
           <Field label="Agent wants to use">
-            <span className="font-mono text-deck-live">{escalation.tool}</span>
+            {/* Full-strength text, not a state colour: nothing is running — this is the subject
+                of the question, set against the dim values of the fields below it. */}
+            <span className="font-mono text-deck-text">{escalation.tool}</span>
           </Field>
 
           {escalation.blockedPath && (
@@ -116,7 +118,7 @@ function PermissionDialog({
           )}
 
           <Field label="Input">
-            <pre className="max-h-40 overflow-auto rounded border border-white/[0.06] bg-black/40 p-2.5 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-deck-dim">
+            <pre className="max-h-40 overflow-auto rounded border border-deck-line bg-deck-surface p-2.5 font-mono text-[11px] leading-relaxed break-all whitespace-pre-wrap text-deck-dim">
               {JSON.stringify(escalation.input, null, 2)}
             </pre>
           </Field>
@@ -141,7 +143,7 @@ function PermissionDialog({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-3 border-t border-white/[0.08] bg-white/[0.02] px-4 py-3">
+        <div className="flex shrink-0 items-center gap-3 border-t border-deck-line bg-deck-surface px-4 py-3">
           {/* What allowing actually does, next to the button that does it. "Once" is the whole
               safety property here and it should not be something you have to already know. */}
           <span className="grow text-[10.5px] leading-relaxed text-deck-faint">

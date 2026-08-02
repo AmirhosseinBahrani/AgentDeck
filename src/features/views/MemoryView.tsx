@@ -108,7 +108,7 @@ export function MemoryView({ project }: { project: string | null }) {
         onChange={(e) => setContent(e.target.value)}
         spellCheck={false}
         placeholder={"Migrations are hand-written — never generate them.\nThe API client in src/generated is produced by codegen; edit the schema instead."}
-        className="min-h-0 grow resize-none rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.02] p-4 font-mono text-[12px] leading-[19px] text-deck-text placeholder:text-deck-faint/70 focus:border-white/[0.14] focus:outline-none"
+        className="min-h-0 grow resize-none rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface p-4 font-mono text-[12px] leading-[19px] text-deck-text placeholder:text-deck-faint/70 focus:border-deck-accent focus:outline-none"
       />
 
       {status && <p className="text-[11.5px] text-deck-dim">{status}</p>}

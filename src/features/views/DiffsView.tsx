@@ -100,7 +100,7 @@ export function DiffsView() {
                 </button>
 
                 {open && (
-                  <div className="border-t border-white/[0.06] px-3 py-2">
+                  <div className="border-t border-deck-line px-3 py-2">
                     {diff.files.map((file) => (
                       <div key={file.path} className="flex items-center gap-3 py-1">
                         <span className="min-w-0 grow truncate font-mono text-[11px] text-deck-dim">
@@ -121,7 +121,7 @@ export function DiffsView() {
                         </span>
                         {/* Proportion, not absolute width: a 4000-line file would otherwise
                             flatten every other bar into invisibility. */}
-                        <span className="flex h-1 w-16 shrink-0 overflow-hidden rounded-full bg-white/[0.08]">
+                        <span className="flex h-1 w-16 shrink-0 overflow-hidden rounded-full bg-deck-raised">
                           <span
                             className="bg-deck-done"
                             style={{ width: `${share(file.added, file.added + file.removed)}%` }}
@@ -186,7 +186,7 @@ function Patch({ taskId }: { taskId: string }) {
   }
 
   return (
-    <pre className="mt-2 max-h-[460px] overflow-auto rounded-md border border-white/[0.06] bg-black/25 p-3 font-mono text-[11px] leading-[17px]">
+    <pre className="mt-2 max-h-[460px] overflow-auto rounded-md border border-deck-line bg-deck-surface p-3 font-mono text-[11px] leading-[17px]">
       {patch.split("\n").map((line, i) => (
         <div key={i} className={lineTone(line)}>
           {line || " "}
@@ -204,7 +204,9 @@ function Patch({ taskId }: { taskId: string }) {
  */
 function lineTone(line: string): string {
   if (line.startsWith("+++") || line.startsWith("---")) return "text-deck-faint";
-  if (line.startsWith("@@")) return "text-deck-live";
+  // The hunk header is navigation rather than a change, so it takes the interactive colour and
+  // leaves green and red to mean added and removed.
+  if (line.startsWith("@@")) return "text-deck-accent";
   if (line.startsWith("diff ") || line.startsWith("index ")) return "text-deck-faint";
   if (line.startsWith("+")) return "text-deck-done";
   if (line.startsWith("-")) return "text-deck-danger";

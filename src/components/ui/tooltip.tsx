@@ -15,8 +15,10 @@ export const TooltipContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 max-w-xs rounded-md border border-white/12 bg-deck-raised/95 px-2 py-1.5",
-        "text-[11px] leading-relaxed text-deck-text shadow-lg backdrop-blur-xl",
+        // `glass` carries the themed border and shadow; the raised fill lifts it off whatever
+        // surface it is covering.
+        "glass z-50 max-w-xs rounded-md bg-deck-raised px-2 py-1.5",
+        "text-[11px] leading-relaxed text-deck-text",
         className,
       )}
       {...props}

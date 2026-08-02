@@ -15,15 +15,18 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // Cobalt, and the only place it appears as a fill. `text-deck-on-accent` rather than a
+        // fixed white: the dark theme's accent is a light blue, so white-on-accent would be
+        // unreadable there.
         primary:
-          "bg-deck-text text-deck-void shadow-[0_1px_2px_oklch(0_0_0/0.4)] hover:bg-white active:translate-y-px",
+          "bg-deck-accent text-deck-on-accent hover:brightness-110 active:translate-y-px",
         secondary:
-          "border border-white/10 bg-white/5 text-deck-text hover:border-white/20 hover:bg-white/10 active:translate-y-px",
-        ghost: "text-deck-dim hover:bg-white/6 hover:text-deck-text",
+          "border border-deck-line-strong bg-deck-bg text-deck-text hover:bg-deck-surface active:translate-y-px",
+        ghost: "text-deck-dim hover:bg-deck-surface hover:text-deck-text",
         danger:
-          "border border-deck-danger/40 bg-deck-danger/12 text-deck-danger hover:bg-deck-danger/22 active:translate-y-px",
+          "border border-deck-danger/40 bg-deck-danger/10 text-deck-danger hover:bg-deck-danger/18 active:translate-y-px",
         attention:
-          "bg-deck-attention text-deck-void shadow-[0_1px_2px_oklch(0_0_0/0.4)] hover:brightness-110 active:translate-y-px",
+          "bg-deck-attention text-deck-on-accent hover:brightness-110 active:translate-y-px",
       },
       size: {
         sm: "h-6 px-2 text-[11px] [&_svg]:size-3",

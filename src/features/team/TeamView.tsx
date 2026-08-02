@@ -136,7 +136,7 @@ function PlanningNotice({ startedAt }: { startedAt: number }) {
   const seconds = startedAt ? Math.max(0, Math.floor((now - startedAt) / 1000)) : 0;
 
   return (
-    <div className="flex items-center gap-3 rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.025] px-4 py-3.5">
+    <div className="flex items-center gap-3 rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface px-4 py-3.5">
       <Loader2 className="size-4 shrink-0 animate-spin text-deck-live" />
       <div className="flex min-w-0 grow flex-col gap-0.5">
         <span className="text-[12.5px] font-medium text-deck-text">
@@ -204,7 +204,7 @@ function AddTask({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-deck-text/25 backdrop-blur-sm">
       <div className="glass animate-rise flex w-[560px] flex-col gap-4 rounded-[14px] p-6">
         <div>
           <h2 className="text-[19px] font-semibold tracking-tight text-deck-text">Add a task</h2>
@@ -229,8 +229,10 @@ function AddTask({
               className={cn(
                 "rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors",
                 (role || roles[0]) === r
-                  ? "border-deck-live/40 bg-deck-live/[0.1] text-deck-live"
-                  : "border-white/[0.08] text-deck-faint hover:bg-white/[0.05]",
+                  ? // Which role is picked is a selection, so cobalt rather than the teal that
+                    // means an agent of that role is working.
+                    "border-deck-accent/40 bg-deck-accent-wash text-deck-accent"
+                  : "border-deck-line text-deck-faint hover:bg-deck-surface",
               )}
             >
               {r}
@@ -243,7 +245,7 @@ function AddTask({
           onChange={(e) => setDescription(e.target.value)}
           rows={4}
           placeholder="What needs doing, and how you will know it worked."
-          className="resize-none rounded-md border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-[12.5px] leading-[19px] text-deck-text placeholder:text-deck-faint focus:border-white/[0.16] focus:outline-none"
+          className="resize-none rounded-md border border-deck-line bg-deck-surface px-3 py-2 text-[12.5px] leading-[19px] text-deck-text placeholder:text-deck-faint focus:border-deck-accent focus:outline-none"
         />
 
         <Input
@@ -365,14 +367,14 @@ function AddTask({
       />
 
 
-      <header className="flex shrink-0 items-end gap-[60px] border-b border-white/[0.07] px-7 pt-[22px] pb-[18px]">
+      <header className="flex shrink-0 items-end gap-[60px] border-b border-deck-line px-7 pt-[22px] pb-[18px]">
         <div className="flex min-w-0 grow flex-col gap-3">
           <div className="flex items-center gap-3">
             <span className="label-micro">Objective</span>
             <span
               className={cn(
                 "flex h-5 items-center gap-[7px] rounded-full px-[9px]",
-                blocked ? "bg-deck-attention/[0.13]" : "bg-deck-live/[0.13]",
+                blocked ? "bg-deck-attention-wash" : "bg-deck-live-wash",
               )}
             >
               <span
@@ -429,7 +431,7 @@ function AddTask({
       </header>
 
       {error && (
-        <div className="shrink-0 border-b border-deck-attention/25 bg-deck-attention/[0.08] px-7 py-1.5 text-[11px] text-deck-attention">
+        <div className="shrink-0 border-b border-deck-attention/25 bg-deck-attention-wash px-7 py-1.5 text-[11px] text-deck-attention">
           {error}
         </div>
       )}
@@ -511,7 +513,7 @@ function AddTask({
           {held.map((task) => (
             <div
               key={task.id}
-              className="rounded-[var(--radius-panel)] border border-deck-attention/30 bg-deck-attention/[0.08] p-4"
+              className="rounded-[var(--radius-panel)] border border-deck-attention/30 bg-deck-attention-tint p-4"
             >
               <div className="label-micro text-deck-attention">Waiting to start</div>
               <div className="mt-1.5 text-[13px] leading-5 text-deck-text">{task.title}</div>
@@ -549,9 +551,9 @@ function AddTask({
                       "rounded-full px-[9px] py-1 font-mono text-[10.5px]",
                       active
                         ? stage === "escalate"
-                          ? "border border-deck-attention/40 bg-deck-attention/[0.14] font-medium text-deck-attention"
-                          : "border border-deck-live/40 bg-deck-live/[0.14] font-medium text-deck-live"
-                        : "bg-white/[0.04] text-deck-faint",
+                          ? "border border-deck-attention/40 bg-deck-attention-wash font-medium text-deck-attention"
+                          : "border border-deck-live/40 bg-deck-live-wash font-medium text-deck-live"
+                        : "bg-deck-surface text-deck-faint",
                     )}
                   >
                     {stage}
@@ -621,8 +623,8 @@ function AddTask({
                   className={cn(
                     "h-[22px] grow rounded-[5px] border",
                     i < (snapshot?.engaged ?? 0)
-                      ? "border-deck-live/40 bg-deck-live/[0.22]"
-                      : "border-white/[0.08] bg-white/[0.04]",
+                      ? "border-deck-live/40 bg-deck-live-wash"
+                      : "border-deck-line bg-deck-surface",
                   )}
                 />
               ))}

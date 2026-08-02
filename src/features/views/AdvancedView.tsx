@@ -117,7 +117,7 @@ export function AdvancedView({ project }: { project: string | null }) {
                   {members
                     .sort((a, b) => a.name.localeCompare(b.name))
                     .map((m) => (
-                      <tr key={m.agent_id} className="hover:bg-white/[0.03]">
+                      <tr key={m.agent_id} className="hover:bg-deck-surface">
                         <Td className="text-deck-text">{m.name}</Td>
                         <Td numeric>{m.sessions}</Td>
                         <Td numeric>{m.turns}</Td>
@@ -243,14 +243,14 @@ function ModelPicker({
             className={cn(
               "flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left transition-colors",
               value === model.id
-                ? "border-deck-live/40 bg-deck-live/[0.08]"
-                : "border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.045]",
+                ? "border-deck-accent/40 bg-deck-accent-wash"
+                : "border-deck-line bg-deck-surface hover:bg-deck-raised",
             )}
           >
             <span
               className={cn(
                 "size-2 shrink-0 rounded-full border",
-                value === model.id ? "border-deck-live bg-deck-live" : "border-deck-faint/60",
+                value === model.id ? "border-deck-accent bg-deck-accent" : "border-deck-faint/60",
               )}
             />
             <span
@@ -349,15 +349,15 @@ function Permissions({ project }: { project: string | null }) {
             className={cn(
               "flex items-start gap-3 rounded-[var(--radius-panel)] border px-3.5 py-2.5 text-left transition-colors",
               level === option.id
-                ? "border-deck-live/40 bg-deck-live/[0.08]"
-                : "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.045]",
+                ? "border-deck-accent/40 bg-deck-accent-wash"
+                : "border-deck-line bg-deck-surface hover:bg-deck-raised",
             )}
           >
             <span
               className={cn(
                 "mt-[3px] size-2.5 shrink-0 rounded-full border",
                 level === option.id
-                  ? "border-deck-live bg-deck-live"
+                  ? "border-deck-accent bg-deck-accent"
                   : "border-deck-faint/60",
               )}
             />
@@ -392,7 +392,7 @@ function Permissions({ project }: { project: string | null }) {
           {extra.map((prefix) => (
             <span
               key={prefix}
-              className="flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.04] px-2 py-1 font-mono text-[11px] text-deck-dim"
+              className="flex items-center gap-1.5 rounded-md border border-deck-line bg-deck-surface px-2 py-1 font-mono text-[11px] text-deck-dim"
             >
               {prefix}
               <button
@@ -437,7 +437,7 @@ function Permissions({ project }: { project: string | null }) {
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "warn" }) {
   return (
-    <div className="flex min-w-[104px] flex-col gap-0.5 rounded-[var(--radius-panel)] border border-white/[0.07] bg-white/[0.025] px-3.5 py-2.5">
+    <div className="flex min-w-[104px] flex-col gap-0.5 rounded-[var(--radius-panel)] border border-deck-line bg-deck-surface px-3.5 py-2.5">
       <span className="label-micro">{label}</span>
       <span
         className={cn(
@@ -463,7 +463,7 @@ function Th({
   return (
     <th
       className={cn(
-        "border-b border-white/[0.07] pb-1.5 font-normal",
+        "border-b border-deck-line-strong pb-1.5 font-normal",
         numeric && "text-right",
         className,
       )}
@@ -487,7 +487,7 @@ function Td({
   return (
     <td
       className={cn(
-        "border-b border-white/[0.04] py-[7px] text-[12px]",
+        "border-b border-deck-line py-[7px] text-[12px]",
         numeric && "text-right font-mono tabular-nums",
         tone === "warn" ? "text-deck-attention" : "text-deck-dim",
         className,

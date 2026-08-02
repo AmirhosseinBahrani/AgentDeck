@@ -25,7 +25,7 @@ export function Panel({
 }) {
   return (
     <section className={cn("flex min-h-0 flex-col", className)}>
-      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-white/6 px-3">
+      <header className="flex h-8 shrink-0 items-center gap-2 border-b border-deck-line px-3">
         <h2
           className={cn(
             "label-micro",
@@ -41,7 +41,7 @@ export function Panel({
               "rounded px-1 font-mono text-[10px] leading-4",
               accent === "attention"
                 ? "bg-deck-attention/18 text-deck-attention"
-                : "bg-white/8 text-deck-dim",
+                : "bg-deck-raised text-deck-dim",
             )}
           >
             {count}

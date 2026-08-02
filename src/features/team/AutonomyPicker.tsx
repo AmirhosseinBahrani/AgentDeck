@@ -34,7 +34,7 @@ export function AutonomyPicker({
 
   return (
     <div className="flex items-center gap-1.5">
-      <div className="flex rounded-md border border-white/10 bg-black/20 p-0.5">
+      <div className="flex rounded-md border border-deck-line bg-deck-surface p-0.5">
         {MODES.map((mode) => (
           <Tooltip key={mode.id}>
             <TooltipTrigger asChild>
@@ -44,11 +44,12 @@ export function AutonomyPicker({
                 className={cn(
                   "rounded px-2 py-0.5 text-[11px] transition-colors disabled:opacity-40",
                   value === mode.id
-                    ? // The selected mode is filled in its own semantic colour, so the level of
-                      // autonomy is legible without reading the word.
+                    ? // The selected mode is filled: cobalt, like every other picked thing. Only
+                      // autonomous departs from that, keeping amber so the level of autonomy is
+                      // legible without reading the word.
                       mode.id === "autonomous"
-                      ? "bg-deck-attention/90 font-medium text-deck-void"
-                      : "bg-white/12 font-medium text-deck-text"
+                      ? "bg-deck-attention font-medium text-deck-on-accent"
+                      : "bg-deck-accent font-medium text-deck-on-accent"
                     : "text-deck-faint hover:text-deck-dim",
                 )}
               >
@@ -101,7 +102,7 @@ function ConfirmAutonomous({
   onConfirm: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-deck-text/25 backdrop-blur-sm">
       <div className="glass animate-rise w-[27rem] rounded-[var(--radius-panel)] p-4">
         <h2 className="text-[13px] font-medium text-deck-text">Run without approvals?</h2>
         <p className="mt-2 text-[12px] leading-relaxed text-deck-dim">
@@ -132,13 +133,14 @@ export function AutonomyStripe({ mode, active }: { mode: Autonomy; active: boole
   if (!active) {
     return null;
   }
-  // A lit edge rather than a flat bar: it reads as a status light on an instrument, and the
-  // glow is what makes it noticeable in peripheral vision without occupying real space.
+  // A coloured edge rather than a flat bar: it reads as a status light on an instrument, and
+  // sits in peripheral vision without occupying real space. The glow it used to carry was a
+  // fixed dark-theme colour that turned into grime on a paper ground, so the hue carries it now.
   const colour =
     mode === "autonomous"
-      ? "bg-deck-attention shadow-[0_0_12px_2px_oklch(0.8_0.15_78/0.5)]"
+      ? "bg-deck-attention"
       : mode === "assisted"
-        ? "bg-deck-live shadow-[0_0_12px_2px_oklch(0.78_0.13_195/0.4)]"
+        ? "bg-deck-live"
         : "bg-deck-faint";
   return <div className={cn("h-px w-full shrink-0", colour)} title={`${mode} mode`} />;
 }

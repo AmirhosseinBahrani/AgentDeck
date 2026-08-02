@@ -46,7 +46,7 @@ export function NavTabs({
   trailing?: React.ReactNode;
 }) {
   return (
-    <nav className="flex h-[42px] shrink-0 items-center gap-5 border-b border-white/[0.07] px-7">
+    <nav className="flex h-[42px] shrink-0 items-center gap-5 border-b border-deck-line px-7">
       {TABS.map((tab) => (
         <button
           key={tab.id}
@@ -55,8 +55,9 @@ export function NavTabs({
           onClick={() => onChange(tab.id)}
           className={cn(
             "flex h-[42px] items-center border-b-[1.5px] text-[12.5px] transition-colors",
+            // Cobalt: where you are is navigation, not a running agent.
             active === tab.id
-              ? "border-deck-live font-semibold text-deck-text"
+              ? "border-deck-accent font-semibold text-deck-text"
               : "border-transparent",
             tab.ready && active !== tab.id && "text-deck-faint hover:text-deck-dim",
             !tab.ready && "cursor-not-allowed text-deck-faint/40",

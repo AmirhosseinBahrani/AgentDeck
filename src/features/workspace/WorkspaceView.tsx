@@ -128,7 +128,7 @@ export function WorkspaceView({
         {current && <SessionHeader agent={current} onKill={kill} />}
 
         {pastEntry && (
-          <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.07] px-4 py-1.5 text-[11px] text-deck-faint">
+          <div className="flex shrink-0 items-center gap-2 border-b border-deck-line px-4 py-1.5 text-[11px] text-deck-faint">
             <span className="text-deck-dim">{pastEntry.agent_name}</span>
             <span>·</span>
             <span>{pastEntry.task_title ?? "no task"}</span>
@@ -139,7 +139,7 @@ export function WorkspaceView({
         )}
 
         {error && (
-          <div className="shrink-0 border-b border-deck-attention/25 bg-deck-attention/[0.08] px-4 py-1.5 text-[11px] text-deck-attention">
+          <div className="shrink-0 border-b border-deck-attention/25 bg-deck-attention-wash px-4 py-1.5 text-[11px] text-deck-attention">
             {error}
           </div>
         )}
@@ -153,7 +153,7 @@ export function WorkspaceView({
         </div>
       </main>
 
-      <aside className="glass-flat flex w-[300px] shrink-0 flex-col gap-5 overflow-y-auto border-l border-white/[0.07] p-4">
+      <aside className="glass-flat flex w-[300px] shrink-0 flex-col gap-5 overflow-y-auto border-l border-deck-line p-4">
         {selectedTask ? (
           <TaskDetail
             task={selectedTask}
@@ -268,7 +268,7 @@ function TaskDetail({
       </section>
 
       {task.awaiting_approval && (
-        <p className="rounded-md border border-deck-attention/30 bg-deck-attention/[0.08] px-2.5 py-2 text-[11.5px] leading-relaxed text-deck-attention">
+        <p className="rounded-md border border-deck-attention/30 bg-deck-attention-wash px-2.5 py-2 text-[11.5px] leading-relaxed text-deck-attention">
           Assigned and ready, but this autonomy mode needs you to start it.
         </p>
       )}
@@ -338,7 +338,7 @@ function NoSession({
             <button
               key={entry.session_id}
               onClick={() => onOpen(entry.session_id)}
-              className="flex items-center gap-3 rounded-md border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-left transition-colors hover:bg-white/[0.05]"
+              className="flex items-center gap-3 rounded-md border border-deck-line bg-deck-surface px-3 py-2 text-left transition-colors hover:bg-deck-raised"
             >
               <span className="shrink-0 text-[12.5px] font-medium text-deck-text">
                 {entry.agent_name}
@@ -373,7 +373,7 @@ function SessionTabs({
   onClose: (id: string) => void;
 }) {
   return (
-    <div className="glass-flat flex h-10 shrink-0 items-end gap-0.5 border-b border-white/[0.07] px-2.5">
+    <div className="glass-flat flex h-10 shrink-0 items-end gap-0.5 border-b border-deck-line px-2.5">
       {sessions.length === 0 && (
         <span className="pb-2.5 pl-1 text-[11px] text-deck-faint">
           No sessions open. Pick an agent from the roster to read what it is doing.
@@ -387,9 +387,11 @@ function SessionTabs({
             key={id}
             className={cn(
               "group flex h-[31px] items-center gap-2 rounded-t-lg px-3 transition-colors",
+              // The focused tab is lifted to the page ground rather than tinted accent — a strip
+              // of them would otherwise compete with the selected row in the sidebar.
               isActive
-                ? "border-t border-r border-l border-white/[0.09] bg-white/[0.06]"
-                : "hover:bg-white/[0.03]",
+                ? "border-t border-r border-l border-deck-line bg-deck-bg"
+                : "hover:bg-deck-raised",
             )}
           >
             <button onClick={() => onSelect(id)} className="flex items-center gap-2">
@@ -439,7 +441,7 @@ function SessionHeader({
   const [confirming, setConfirming] = useState(false);
 
   return (
-    <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-white/[0.07] px-4">
+    <header className="flex h-[52px] shrink-0 items-center gap-3 border-b border-deck-line px-4">
       <div className="flex min-w-0 flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <span className="text-[14px] font-semibold text-deck-text">{agent.name}</span>

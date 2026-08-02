@@ -28,7 +28,7 @@ export function EscalationInbox({
       {escalations.map((escalation) => (
         <div
           key={escalation.id}
-          className="animate-rise rounded-[7px] border border-deck-attention/30 bg-deck-attention/8 p-2.5"
+          className="animate-rise rounded-[7px] border border-deck-attention/30 bg-deck-attention-wash p-2.5"
         >
           <div className="flex items-start gap-2">
             <AlertTriangle className="mt-px size-3.5 shrink-0 text-deck-attention" />
@@ -39,7 +39,7 @@ export function EscalationInbox({
               {escalation.detail && (
                 // Whatever produced the failure, in its own words. Truncated rather than
                 // scrolled: a wall of test output would bury the buttons under it.
-                <pre className="mt-1.5 max-h-24 overflow-y-auto rounded bg-black/30 p-1.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-deck-dim">
+                <pre className="mt-1.5 max-h-24 overflow-y-auto rounded bg-deck-bg p-1.5 font-mono text-[10px] leading-relaxed whitespace-pre-wrap text-deck-dim">
                   {escalation.detail}
                 </pre>
               )}

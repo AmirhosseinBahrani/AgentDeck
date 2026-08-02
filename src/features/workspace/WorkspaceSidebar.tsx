@@ -32,9 +32,9 @@ export function WorkspaceSidebar({
   const past = history.filter((h) => !liveSessions.has(h.session_id));
 
   return (
-    <aside className="glass-flat flex w-[236px] shrink-0 flex-col gap-[22px] overflow-y-auto border-r border-white/[0.07] px-3 py-[18px]">
+    <aside className="glass-flat flex w-[236px] shrink-0 flex-col gap-[22px] overflow-y-auto border-r border-deck-line px-3 py-[18px]">
       <Group label="Workspace">
-        <div className="flex h-7 items-center gap-2 rounded-md bg-white/[0.05] px-2">
+        <div className="flex h-7 items-center gap-2 rounded-md bg-deck-raised px-2">
           <span className="grow truncate text-[12.5px] font-semibold text-deck-text">
             {projectName(snapshot)}
           </span>
@@ -52,9 +52,11 @@ export function WorkspaceSidebar({
               onClick={() => agent.session_id && onOpenSession(agent.session_id)}
               className={cn(
                 "flex h-[31px] items-center gap-2 rounded-md px-2 text-left transition-colors",
-                active && "bg-deck-live/[0.09] ring-1 ring-deck-live/25",
-                !active && agent.session_id && "hover:bg-white/[0.05]",
-                agent.status === "blocked" && !active && "bg-deck-attention/[0.08]",
+                // Selection is accent; the dot and the status word beside it stay on the state
+                // colours, so a running agent still reads as running when it is the open one.
+                active && "bg-deck-accent-wash ring-1 ring-deck-accent/25",
+                !active && agent.session_id && "hover:bg-deck-raised",
+                agent.status === "blocked" && !active && "bg-deck-attention-wash",
               )}
             >
               <span className="flex w-2.5 shrink-0 justify-center">
@@ -112,7 +114,7 @@ export function WorkspaceSidebar({
               title={task.title}
               className={cn(
                 "flex h-7 items-center gap-2 rounded-md px-2 text-left transition-colors",
-                selected ? "bg-white/[0.07]" : "hover:bg-white/[0.05]",
+                selected ? "bg-deck-accent-wash" : "hover:bg-deck-raised",
               )}
             >
               <span className="flex w-2.5 shrink-0 justify-center">
@@ -146,7 +148,7 @@ export function WorkspaceSidebar({
                 title={entry.task_title ?? entry.agent_name}
                 className={cn(
                   "flex flex-col gap-px rounded-md px-2 py-1 text-left transition-colors",
-                  active ? "bg-white/[0.07]" : "hover:bg-white/[0.05]",
+                  active ? "bg-deck-accent-wash" : "hover:bg-deck-raised",
                 )}
               >
                 <span className="flex items-center gap-2">

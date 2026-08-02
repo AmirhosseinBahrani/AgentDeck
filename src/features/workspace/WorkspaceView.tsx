@@ -435,7 +435,7 @@ function SessionTabs({
               drop(id);
             }}
             className={cn(
-              "group flex h-[31px] cursor-grab items-center gap-2 rounded-t-lg px-3 transition-colors active:cursor-grabbing",
+              "group flex h-[31px] cursor-grab items-center gap-2 rounded-t-lg pr-3 pl-2.5 transition-colors active:cursor-grabbing",
               // A line on the edge the tab would land against, rather than moving the other tabs
               // out of the way. Reflowing the strip under the cursor makes the target you were
               // aiming at the one thing that moves.
@@ -448,6 +448,19 @@ function SessionTabs({
                 : "hover:bg-deck-raised",
             )}
           >
+            {/* A grip that only appears on hover. The strip is dense and a permanent handle on
+                every tab would read as clutter, but without any affordance nothing suggests the
+                tabs can be moved at all. */}
+            <span className="-ml-1.5 flex w-2 shrink-0 justify-center opacity-0 transition-opacity group-hover:opacity-100">
+              <svg width="6" height="12" viewBox="0 0 6 12" fill="none">
+                <circle cx="1.5" cy="2.5" r="0.9" fill="var(--deck-faint)" />
+                <circle cx="4.5" cy="2.5" r="0.9" fill="var(--deck-faint)" />
+                <circle cx="1.5" cy="6" r="0.9" fill="var(--deck-faint)" />
+                <circle cx="4.5" cy="6" r="0.9" fill="var(--deck-faint)" />
+                <circle cx="1.5" cy="9.5" r="0.9" fill="var(--deck-faint)" />
+                <circle cx="4.5" cy="9.5" r="0.9" fill="var(--deck-faint)" />
+              </svg>
+            </span>
             <button
               draggable={false}
               onClick={() => onSelect(id)}

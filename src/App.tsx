@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
@@ -58,7 +58,19 @@ function Deck() {
   // Owned here rather than in the start screen. The rail shows it, the start screen sets it, and
   // a run reads it — three places, so the one copy has to sit above all of them. It lived inside
   // the start screen, so the rail always displayed the default no matter what you picked.
-  const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
+  const [autonomy, setAutonomyState] = useState<Autonomy>("assisted");
+
+  /**
+   * Sets the mode locally and tells the supervisor.
+   *
+   * The local copy is what the rail and the start screen render; the backend copy is what the
+   * driver reads at its next dispatch. Told unconditionally rather than only while a run is
+   * live — a run that starts a moment later would otherwise begin under the previous mode.
+   */
+  const setAutonomy = useCallback((next: Autonomy) => {
+    setAutonomyState(next);
+    void invoke("set_autonomy", { autonomy: next }).catch(() => {});
+  }, []);
   const stats = usePumpStats();
   const picker = useProjectPicker(setProject);
 

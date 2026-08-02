@@ -130,8 +130,10 @@ export function AppRail({
         // A live run reports the mode it was started under; otherwise this is the pending choice
         // the next run will use. Showing the snapshot in both cases was the bug — before a run
         // the snapshot is a default, so picking a mode appeared to do nothing.
+        // A live run reports what it is actually enforcing; otherwise this is the pending
+        // choice the next run will use.
         mode={running ? snapshot?.autonomy || autonomy : autonomy}
-        locked={running}
+        live={running}
         maxConcurrent={snapshot?.max_concurrent ?? 0}
         onChange={onAutonomyChange}
       />
@@ -228,13 +230,13 @@ function Item({
 
 function AutonomyFoot({
   mode,
-  locked,
+  live,
   maxConcurrent,
   onChange,
 }: {
   mode: Autonomy;
-  /** A run enforces the mode it started with, so changing it mid-flight would be a lie. */
-  locked: boolean;
+  /** Whether a run is going, which only changes when the choice takes effect. */
+  live: boolean;
   maxConcurrent: number;
   onChange: (next: Autonomy) => void;
 }) {
@@ -258,20 +260,17 @@ function AutonomyFoot({
         {(["manual", "assisted", "autonomous"] as const).map((option) => (
           <button
             key={option}
-            disabled={locked}
             onClick={() => onChange(option)}
             title={
-              locked
-                ? "The run is enforcing this mode. Stop it to choose another."
+              live
+                ? `Switch to ${option} — takes effect at the next dispatch`
                 : `Start the next run in ${option} mode`
             }
             className={cn(
               "flex h-6 flex-1 items-center justify-center rounded-md text-[11px] capitalize transition-colors",
               option === label
                 ? "bg-deck-text font-semibold text-deck-bg"
-                : "font-medium text-deck-faint",
-              !locked && option !== label && "hover:text-deck-text",
-              locked && "cursor-default",
+                : "font-medium text-deck-faint hover:text-deck-text",
             )}
           >
             {option === "autonomous" ? "auto" : option}
@@ -280,9 +279,9 @@ function AutonomyFoot({
       </div>
 
       <p className="text-[11px] leading-4 text-deck-dim">{copy[label] ?? copy.assisted}</p>
-      {locked && (
+      {live && (
         <span className="font-mono text-[10px] text-deck-faint">
-          locked while the run is going
+          applies from the next dispatch
         </span>
       )}
     </div>

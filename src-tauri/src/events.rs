@@ -400,6 +400,8 @@ pub async fn start_supervisor_run(
     let added = state.pending_tasks.clone();
     added.lock().clear();
     let added_queue = crate::supervision::AddedTasks(added);
+    *state.autonomy.lock() = config.autonomy;
+    let autonomy_source = crate::supervision::LiveAutonomy(state.autonomy.clone());
     let answers = state.pending_answers.clone();
     answers.lock().clear();
     let answer_queue = crate::supervision::GivenAnswers(answers);
@@ -456,7 +458,8 @@ pub async fn start_supervisor_run(
             .with_approvals(&approval_queue)
             .with_answers(&answer_queue)
             .with_guidance(&guidance_queue)
-            .with_added_tasks(&added_queue);
+            .with_added_tasks(&added_queue)
+            .with_autonomy(&autonomy_source);
         let mut run = Run::new();
 
         // Published after each iteration rather than polled from the run: polling would let the
@@ -1960,6 +1963,30 @@ mod tests {
         assert_eq!(slug_for_directory("!!!"), "");
         assert_eq!(slug_for_directory(""), "");
     }
+}
+
+/// Changes how much the supervisor may do without being asked.
+///
+/// Takes effect on the next dispatch rather than at the next run. Both places the mode is
+/// consulted — whether to hold an agent for approval, and whether to retry a failure — are read
+/// at the moment they matter, so nothing about the loop required it to be fixed for the life of
+/// a run. It was simply stored somewhere nothing could change.
+#[tauri::command]
+pub async fn set_autonomy(state: State<'_, AppState>, autonomy: String) -> Result<(), String> {
+    let parsed = match autonomy.as_str() {
+        "manual" => deck_supervisor::autonomy::Autonomy::Manual,
+        "assisted" => deck_supervisor::autonomy::Autonomy::Assisted,
+        "autonomous" => deck_supervisor::autonomy::Autonomy::Autonomous,
+        other => return Err(format!("{other} is not an autonomy mode")),
+    };
+
+    *state.autonomy.lock() = parsed;
+
+    // Kept in step so the dashboard does not keep reporting the mode the run began with.
+    if let Some(snapshot) = state.run_snapshot.lock().as_mut() {
+        snapshot.autonomy = parsed.as_str().to_string();
+    }
+    Ok(())
 }
 
 /// Adds a task to a run that is already going.

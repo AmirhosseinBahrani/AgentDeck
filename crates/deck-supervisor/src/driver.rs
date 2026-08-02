@@ -4,7 +4,7 @@
 //! result only reaches the graph through the validation ladder, and every state change goes
 //! through `deck_core`'s transition table. The driver's own job is sequencing and I/O.
 
-use crate::autonomy::{ApprovalQueue, Autonomy, NoApprovals};
+use crate::autonomy::{ApprovalQueue, Autonomy, AutonomySource, NoApprovals};
 use crate::contract::{
     run_gate, validate_and_repair, Criterion, GateOutcome, TaskContract, Verification,
 };
@@ -255,6 +255,8 @@ pub struct Driver<'a> {
     pub answers: &'a dyn AnswerQueue,
     pub guidance: &'a dyn GuidanceQueue,
     pub added_tasks: &'a dyn TaskQueue,
+    /// `None` means the mode the run started with, held in `config`.
+    pub autonomy: Option<&'a dyn AutonomySource>,
 }
 
 impl<'a> Driver<'a> {
@@ -272,6 +274,7 @@ impl<'a> Driver<'a> {
             answers: &NoAnswers,
             guidance: &NoGuidance,
             added_tasks: &NoTasks,
+            autonomy: None,
         }
     }
 
@@ -303,6 +306,19 @@ impl<'a> Driver<'a> {
     pub fn with_added_tasks(mut self, added_tasks: &'a dyn TaskQueue) -> Self {
         self.added_tasks = added_tasks;
         self
+    }
+
+    /// Lets the operator change the mode while the run is going.
+    pub fn with_autonomy(mut self, autonomy: &'a dyn AutonomySource) -> Self {
+        self.autonomy = Some(autonomy);
+        self
+    }
+
+    /// The mode in force right now, which is not necessarily the one the run began with.
+    fn autonomy(&self) -> Autonomy {
+        self.autonomy
+            .map(|source| source.current())
+            .unwrap_or(self.config.autonomy)
     }
 
     /// Runs one iteration if the sweep says it is warranted.
@@ -1359,7 +1375,7 @@ impl<'a> Driver<'a> {
             //
             // `remove` rather than `contains`: an approval authorises one start. Leaving it in
             // place would silently re-authorise every future retry of the same task.
-            if self.config.autonomy.dispatch_needs_approval() && !run.approved.remove(&id) {
+            if self.autonomy().dispatch_needs_approval() && !run.approved.remove(&id) {
                 run.awaiting_approval.push(id);
                 continue;
             }
@@ -1464,7 +1480,7 @@ impl<'a> Driver<'a> {
                     // A review failure normally sends the task round again. Manual mode does not
                     // get to do that: its whole claim is that nothing happens twice without a
                     // human seeing it happen once, and a silent retry is exactly that.
-                    let event = if self.config.autonomy.may_retry() {
+                    let event = if self.autonomy().may_retry() {
                         TaskEvent::ReviewFailed {
                             reason: reason.clone(),
                         }

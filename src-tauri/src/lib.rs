@@ -73,6 +73,7 @@ pub fn run() {
             events::get_task_diffs,
             events::get_task_patch,
             events::add_task,
+            events::set_autonomy,
             events::land_integration,
             events::pending_integration,
             events::list_project_files,

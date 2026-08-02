@@ -66,6 +66,9 @@ pub struct AppState {
     /// Worker reports awaiting the driver's IngestReports stage.
     pub pending_claims: crate::supervision::SharedClaims,
     /// Dispatch approvals the operator has granted but the driver has not yet acted on.
+    /// The autonomy mode in force. Read by the driver at every dispatch, so changing it takes
+    /// effect on the next one rather than at the next run.
+    pub autonomy: crate::supervision::SharedAutonomy,
     /// Tasks the operator added while a run is going.
     pub pending_tasks: crate::supervision::SharedAddedTasks,
     pub pending_approvals: crate::supervision::SharedApprovals,
@@ -207,6 +210,7 @@ impl AppState {
             pending_claims: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_approvals: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_tasks: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            autonomy: Arc::new(parking_lot::Mutex::new(Default::default())),
             pending_answers: Arc::new(parking_lot::Mutex::new(Vec::new())),
             pending_guidance: Arc::new(parking_lot::Mutex::new(Vec::new())),
             boot,

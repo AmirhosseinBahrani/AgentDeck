@@ -5,7 +5,7 @@ import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
 import { ProjectGate, useProjectPicker } from "./features/setup/ProjectGate";
 import { RuntimeGate } from "./features/setup/RuntimeGate";
-import type { NavTab } from "./lib/types";
+import type { Autonomy, NavTab } from "./lib/types";
 import { AppRail } from "./features/shell/AppRail";
 import { RunBar } from "./features/shell/RunBar";
 import { TeamView } from "./features/team/TeamView";
@@ -55,6 +55,10 @@ function Deck() {
   const [active, setActive] = useState<string | null>(null);
   const [view, setView] = useState<NavTab>("team");
   const [projectCount, setProjectCount] = useState(0);
+  // Owned here rather than in the start screen. The rail shows it, the start screen sets it, and
+  // a run reads it — three places, so the one copy has to sit above all of them. It lived inside
+  // the start screen, so the rail always displayed the default no matter what you picked.
+  const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
   const stats = usePumpStats();
   const picker = useProjectPicker(setProject);
 
@@ -102,6 +106,8 @@ function Deck() {
         projectCount={projectCount}
         snapshot={snapshot}
         sessionCount={sessions.length}
+        autonomy={autonomy}
+        onAutonomyChange={setAutonomy}
       />
 
       <div className="flex min-w-0 grow flex-col">
@@ -117,6 +123,8 @@ function Deck() {
       {view === "team" && (
         <div className="min-h-0 flex-1">
           <TeamView
+            autonomy={autonomy}
+            onAutonomyChange={setAutonomy}
             onOpenSession={openSession}
             projectPath={project?.path ?? null}
             onProjectChanged={() =>

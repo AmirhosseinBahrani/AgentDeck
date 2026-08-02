@@ -30,10 +30,15 @@ const SUPERVISOR_LOOP = ["observe", "plan", "assign", "review", "escalate"] as c
  * screen that stops everything else.
  */
 export function TeamView({
+  autonomy,
+  onAutonomyChange,
   onOpenSession,
   projectPath,
   onProjectChanged,
 }: {
+  /** Owned by the app shell: the rail displays it, this screen sets it, a run consumes it. */
+  autonomy: Autonomy;
+  onAutonomyChange: (next: Autonomy) => void;
   onOpenSession: (sessionId?: string) => void;
   projectPath: string | null;
   onProjectChanged: () => void;
@@ -45,7 +50,6 @@ export function TeamView({
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<Set<string>>(() => new Set());
   const [addingTask, setAddingTask] = useState(false);
-  const [autonomy, setAutonomy] = useState<Autonomy>("assisted");
   const [now, setNow] = useState(Date.now());
   const [hiring, setHiring] = useState(false);
   const [revoking, setRevoking] = useState<string | null>(null);
@@ -340,7 +344,7 @@ function AddTask({
         onStart={start}
         busy={busy}
         autonomy={autonomy}
-        onAutonomyChange={setAutonomy}
+        onAutonomyChange={onAutonomyChange}
         error={error}
       />
     );

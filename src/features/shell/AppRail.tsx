@@ -36,6 +36,8 @@ export function AppRail({
   projectCount,
   snapshot,
   sessionCount,
+  autonomy,
+  onAutonomyChange,
 }: {
   active: NavTab;
   onChange: (tab: NavTab) => void;
@@ -45,6 +47,8 @@ export function AppRail({
   projectCount: number;
   snapshot: RunSnapshot | null;
   sessionCount: number;
+  autonomy: Autonomy;
+  onAutonomyChange: (next: Autonomy) => void;
 }) {
   const running = !!snapshot?.active;
   const blocked = (snapshot?.open_escalations ?? 0) > 0;
@@ -123,9 +127,13 @@ export function AppRail({
       </nav>
 
       <AutonomyFoot
-        mode={snapshot?.autonomy || "assisted"}
-        running={running}
+        // A live run reports the mode it was started under; otherwise this is the pending choice
+        // the next run will use. Showing the snapshot in both cases was the bug — before a run
+        // the snapshot is a default, so picking a mode appeared to do nothing.
+        mode={running ? snapshot?.autonomy || autonomy : autonomy}
+        locked={running}
         maxConcurrent={snapshot?.max_concurrent ?? 0}
+        onChange={onAutonomyChange}
       />
     </aside>
   );
@@ -220,12 +228,15 @@ function Item({
 
 function AutonomyFoot({
   mode,
-  running,
+  locked,
   maxConcurrent,
+  onChange,
 }: {
   mode: Autonomy;
-  running: boolean;
+  /** A run enforces the mode it started with, so changing it mid-flight would be a lie. */
+  locked: boolean;
   maxConcurrent: number;
+  onChange: (next: Autonomy) => void;
 }) {
   const label = mode?.trim() ? mode : "assisted";
   const copy: Record<string, string> = {
@@ -245,25 +256,34 @@ function AutonomyFoot({
 
       <div className="flex rounded-lg border border-deck-line bg-deck-bg p-0.5">
         {(["manual", "assisted", "autonomous"] as const).map((option) => (
-          <span
+          <button
             key={option}
+            disabled={locked}
+            onClick={() => onChange(option)}
+            title={
+              locked
+                ? "The run is enforcing this mode. Stop it to choose another."
+                : `Start the next run in ${option} mode`
+            }
             className={cn(
-              "flex h-6 flex-1 items-center justify-center rounded-md text-[11px] capitalize",
+              "flex h-6 flex-1 items-center justify-center rounded-md text-[11px] capitalize transition-colors",
               option === label
-                ? // The current mode, not a button: autonomy is chosen where a run is started,
-                  // and a control here would imply it could change mid-run.
-                  "bg-deck-text font-semibold text-deck-bg"
+                ? "bg-deck-text font-semibold text-deck-bg"
                 : "font-medium text-deck-faint",
+              !locked && option !== label && "hover:text-deck-text",
+              locked && "cursor-default",
             )}
           >
             {option === "autonomous" ? "auto" : option}
-          </span>
+          </button>
         ))}
       </div>
 
       <p className="text-[11px] leading-4 text-deck-dim">{copy[label] ?? copy.assisted}</p>
-      {running && label === "autonomous" && (
-        <span className="font-mono text-[10px] text-deck-attention">unattended</span>
+      {locked && (
+        <span className="font-mono text-[10px] text-deck-faint">
+          locked while the run is going
+        </span>
       )}
     </div>
   );

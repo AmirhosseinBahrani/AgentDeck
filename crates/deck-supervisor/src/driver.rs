@@ -88,6 +88,8 @@ pub struct Run {
     /// Tasks already reminded of the completion protocol. One nudge each: repeating it is the
     /// loop this design exists to avoid.
     pub nudged: HashSet<TaskId>,
+    /// Blockers raised this iteration, waiting for the supervisor to route them.
+    pub pending_blockers: Vec<(TaskId, String)>,
     /// Tasks that would have started but are waiting on a human. Surfaced so the operator can
     /// see what their attention is holding up rather than watching an apparently idle run.
     pub awaiting_approval: Vec<TaskId>,
@@ -113,6 +115,7 @@ impl Run {
             awaiting_verification: Vec::new(),
             approved: HashSet::new(),
             nudged: HashSet::new(),
+            pending_blockers: Vec::new(),
             awaiting_approval: Vec::new(),
             escalations: Vec::new(),
             guidance: Vec::new(),
@@ -391,6 +394,7 @@ impl<'a> Driver<'a> {
                 Stage::IngestReports => {
                     self.stage_add_requested(run);
                     self.stage_ingest_reports(run);
+                    self.stage_route_blockers(run).await;
                 }
                 Stage::Reap => {
                     self.stage_reap(run);
@@ -430,6 +434,82 @@ impl<'a> Driver<'a> {
     // Reap — pure: notices agents that died without saying anything
     // -----------------------------------------------------------------------
 
+    /// Sends a raised blocker to the supervisor before it reaches a person.
+    ///
+    /// The task stays out of the ready set either way — it cannot proceed — but when the cause
+    /// belongs to somebody else's work, the run can carry on fixing it instead of stopping. The
+    /// blocked task is made to depend on the fix and returned to the queue, so it comes back on
+    /// its own once the cause is gone rather than needing to be retried by hand.
+    async fn stage_route_blockers(&self, run: &mut Run) {
+        let raised = std::mem::take(&mut run.pending_blockers);
+        if raised.is_empty() {
+            return;
+        }
+        let decisions = Decisions::new(self.planner);
+
+        for (task_id, reason) in raised {
+            let findings: Vec<String> = reason
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .take(12)
+                .map(str::to_string)
+                .collect();
+
+            match self
+                .route_fix(run, task_id, &findings, &decisions, "blocked")
+                .await
+            {
+                Some(fix) => {
+                    let linked = run
+                        .graph
+                        .apply(Mutation {
+                            add_tasks: Vec::new(),
+                            add_edges: vec![Edge {
+                                from: fix,
+                                to: task_id,
+                                kind: EdgeKind::Hard,
+                            }],
+                        })
+                        .is_ok();
+
+                    if linked {
+                        if let Some(current) = run.graph.get(task_id).cloned() {
+                            if let Ok(next) = apply(&current, TaskEvent::Unblocked) {
+                                run.graph.set_state(next);
+                            }
+                        }
+                    }
+
+                    run.log.record_code_decision(
+                        run.state.iteration,
+                        Stage::Failures,
+                        "blocker_routed",
+                        if linked {
+                            "waiting_on_fix"
+                        } else {
+                            "fix_created"
+                        },
+                        "the blocker named work another task owns; queued behind the fix",
+                    );
+                }
+                None => {
+                    let title = run
+                        .titles
+                        .get(&task_id)
+                        .cloned()
+                        .unwrap_or_else(|| task_id.to_string());
+                    run.escalate(
+                        EscalationKind::TaskBlocked,
+                        Some(task_id),
+                        format!("\u{201c}{title}\u{201d} is blocked"),
+                        reason,
+                    );
+                }
+            }
+        }
+    }
+
     /// Turns a reviewer's findings into work for whoever can act on them.
     ///
     /// D6. The alternative — escalating every failed review to the operator — makes a person the
@@ -442,7 +522,9 @@ impl<'a> Driver<'a> {
         reviewed: TaskId,
         findings: &[String],
         decisions: &Decisions<'_>,
-    ) {
+        // How the trouble surfaced, so the prompt and any escalation describe the real event.
+        cause: &str,
+    ) -> Option<TaskId> {
         let title = run
             .titles
             .get(&reviewed)
@@ -451,9 +533,9 @@ impl<'a> Driver<'a> {
         let roles = self.config.roles();
 
         let prompt = format!(
-            "A review failed and the work needs fixing. Describe the single task that would \
+            "A task is {cause} and the work needs fixing. Describe the single task that would \
              resolve it.\n\n\
-             Reviewed task: {title}\n\
+             Affected task: {title}\n\
              Findings:\n{}\n\n\
              Choose the role that owns the thing that is actually wrong — which is often not the \
              role that was reviewed. Give a command that would prove the fix worked, if one \
@@ -473,8 +555,10 @@ impl<'a> Driver<'a> {
             .await;
 
         let Ok((fix, cost)) = proposed else {
-            self.escalate_unrouted(run, reviewed, &title, findings);
-            return;
+            if cause == "failing review" {
+                self.escalate_unrouted(run, reviewed, &title, findings);
+            }
+            return None;
         };
 
         let faults = validate_fix_task(&fix, &roles);
@@ -488,8 +572,10 @@ impl<'a> Driver<'a> {
                 0,
                 cost,
             );
-            self.escalate_unrouted(run, reviewed, &title, findings);
-            return;
+            if cause == "failing review" {
+                self.escalate_unrouted(run, reviewed, &title, findings);
+            }
+            return None;
         }
 
         let id = TaskId::new();
@@ -526,8 +612,10 @@ impl<'a> Driver<'a> {
             })
             .is_err()
         {
-            self.escalate_unrouted(run, reviewed, &title, findings);
-            return;
+            if cause == "failing review" {
+                self.escalate_unrouted(run, reviewed, &title, findings);
+            }
+            return None;
         }
 
         run.contracts.insert(id, contract);
@@ -542,6 +630,7 @@ impl<'a> Driver<'a> {
             0,
             cost,
         );
+        Some(id)
     }
 
     /// When the supervisor cannot work out who should fix something, it asks.
@@ -985,17 +1074,12 @@ impl<'a> Driver<'a> {
                             run.graph.set_state(next);
                         }
                     }
-                    let title = run
-                        .titles
-                        .get(&task_id)
-                        .cloned()
-                        .unwrap_or_else(|| task_id.to_string());
-                    run.escalate(
-                        EscalationKind::TaskBlocked,
-                        Some(task_id),
-                        format!("\u{201c}{title}\u{201d} is blocked"),
-                        reason.clone(),
-                    );
+                    // Handed to the supervisor rather than straight to a person. A worker that
+                    // raises a blocker is usually describing something another task owns — "the
+                    // README documents the wrong command" is not a decision, it is a job — and
+                    // going directly to an escalation made the operator the router for every one
+                    // of them.
+                    run.pending_blockers.push((task_id, reason.clone()));
                     run.log.record_code_decision(
                         run.state.iteration,
                         Stage::IngestReports,
@@ -1698,7 +1782,8 @@ impl<'a> Driver<'a> {
                         if let (Some(reason), true) = (failed_review, now_failed) {
                             let findings: Vec<String> =
                                 reason.split("; ").map(str::to_string).collect();
-                            self.route_fix(run, task_id, &findings, &decisions).await;
+                            self.route_fix(run, task_id, &findings, &decisions, "failing review")
+                                .await;
                         }
                     }
                 }

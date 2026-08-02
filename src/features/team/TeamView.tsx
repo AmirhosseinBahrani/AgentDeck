@@ -5,6 +5,7 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { SectionRule } from "../../components/ui/section-rule";
 import type {
+  AgentSummary,
   Autonomy,
   EscalationAnswer,
   PastRunSummary,
@@ -346,6 +347,9 @@ function AddTask({
         autonomy={autonomy}
         onAutonomyChange={onAutonomyChange}
         error={error}
+        agents={snapshot?.agents ?? []}
+        onHire={() => setHiring(true)}
+        onRevoke={setRevoking}
       />
     );
   }
@@ -715,6 +719,9 @@ function StartScreen({
   autonomy,
   onAutonomyChange,
   error,
+  agents,
+  onHire,
+  onRevoke,
 }: {
   objective: string;
   onObjectiveChange: (v: string) => void;
@@ -723,6 +730,9 @@ function StartScreen({
   autonomy: Autonomy;
   onAutonomyChange: (m: Autonomy) => void;
   error: string | null;
+  agents: AgentSummary[];
+  onHire: () => void;
+  onRevoke: (agentId: string) => void;
 }) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-8">
@@ -764,6 +774,31 @@ function StartScreen({
         </div>
 
         {error && <div className="mt-3 text-[11px] text-deck-danger">{error}</div>}
+
+        {/* The team, before there is any work for it. This screen replaces the whole Run page
+            until a run exists, so with the roster only living there the answer to "who is on
+            this project" — and every way to change it — disappeared exactly when someone was
+            deciding who should do the work. */}
+        <section className="mt-8 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <SectionRule
+              label="Team"
+              trailing={`${agents.length} agent${agents.length === 1 ? "" : "s"}`}
+              className="grow"
+            />
+            <Button variant="ghost" size="sm" onClick={onHire}>
+              <UserPlus /> Hire
+            </Button>
+          </div>
+          {agents.length === 0 ? (
+            <p className="text-[11.5px] leading-relaxed text-deck-faint">
+              No agents yet. A Developer and a Reviewer are hired for you when the first run
+              starts, or add them now.
+            </p>
+          ) : (
+            <AgentRoster agents={agents} onOpenSession={() => {}} onRevoke={onRevoke} />
+          )}
+        </section>
 
         <RunHistory onReuse={onObjectiveChange} />
       </form>

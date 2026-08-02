@@ -1525,6 +1525,35 @@ pub async fn list_session_history(
         .collect())
 }
 
+/// Removes the records of sessions that have finished.
+///
+/// Records only — worktrees and branches are left alone. Refused outright while a run is going:
+/// the live sessions are excluded from the query anyway, but a purge running against tables the
+/// supervisor is actively writing to is not something to do for a tidier list.
+#[tauri::command]
+pub async fn clear_session_history(state: State<'_, AppState>) -> Result<String, String> {
+    if state.live_run.lock().await.is_some() {
+        return Err("A run is going. Stop it before clearing history.".into());
+    }
+
+    let project_id = state.identity.read().project_id.clone();
+    let purged = deck_core::store::sessions::purge_ended(&state.store, &project_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if purged.sessions == 0 {
+        return Ok("Nothing to clear — no finished sessions.".into());
+    }
+
+    Ok(format!(
+        "Cleared {} session{} and {} event{}. Worktrees and branches are untouched.",
+        purged.sessions,
+        if purged.sessions == 1 { "" } else { "s" },
+        purged.events,
+        if purged.events == 1 { "" } else { "s" },
+    ))
+}
+
 #[tauri::command]
 pub async fn get_resumable_sessions(
     state: State<'_, AppState>,

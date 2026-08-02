@@ -48,6 +48,7 @@ pub fn run() {
             events::get_startup_recovery,
             events::get_resumable_sessions,
             events::list_session_history,
+            events::clear_session_history,
             events::get_project_memory,
             events::save_project_memory,
             events::list_skills,

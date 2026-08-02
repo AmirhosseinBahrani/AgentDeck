@@ -895,3 +895,79 @@ async fn a_task_added_mid_run_is_planned_dispatched_and_verified_like_any_other(
         "an afterthought must not decide whether the run may finish"
     );
 }
+
+/// An autonomy mode the test can change underneath a running driver.
+struct Switchable(parking_lot::Mutex<Autonomy>);
+
+impl deck_supervisor::autonomy::AutonomySource for Switchable {
+    fn current(&self) -> Autonomy {
+        *self.0.lock()
+    }
+}
+
+#[tokio::test]
+async fn changing_autonomy_mid_run_takes_effect_on_the_next_dispatch() {
+    // Reported as "the autonomy doesn't work". The mode was fixed in RunConfig at run start, so
+    // the control was inert for the life of a run — which is exactly when someone decides they
+    // would rather approve each agent, or stop being asked. Both places the mode is read are
+    // consulted at the moment they matter, so nothing required it to be constant.
+    let root = workdir("live-autonomy");
+    let cfg = config(root.clone(), Autonomy::Autonomous, "true");
+    let planner = ScriptedPlanner::new();
+    planner.push(
+        json!({
+            "tasks": (0..2).map(|i| json!({
+                "tmp_id": format!("t{i}"), "title": format!("Task {i}"), "role": "developer",
+                "objective_gate": true, "description": "",
+                "contract": {
+                    "version": 1,
+                    "acceptance_criteria": [{
+                        "id": format!("c{i}"), "text": "it works",
+                        "verify": { "type": "command", "cmd": "true", "expect_exit_zero": true }
+                    }],
+                    "constraints": [], "deliverables": [], "definition_of_done": "done"
+                }
+            })).collect::<Vec<_>>(),
+            "edges": [], "reasoning": "two independent tasks"
+        }),
+        0.10,
+    );
+
+    let workspaces = FakeWorkspaces::new(root);
+    // Starts autonomous, so the first pass dispatches without asking.
+    let live = Switchable(parking_lot::Mutex::new(Autonomy::Autonomous));
+    let driver = Driver::new(&cfg, &planner, &workspaces).with_autonomy(&live);
+    let mut run = Run::new();
+
+    let IterationOutcome::Advanced { dispatched } = driver.step(&mut run, true).await else {
+        panic!("expected advance");
+    };
+    assert_eq!(dispatched.len(), 2, "autonomous starts its own agents");
+    assert!(run.awaiting_approval.is_empty());
+
+    // The operator decides they want to approve each one from here.
+    *live.0.lock() = Autonomy::Manual;
+
+    // A fresh task arrives, and this one must wait even though the run began autonomous.
+    let held = TaskId::new();
+    run.graph
+        .apply(deck_supervisor::graph::Mutation {
+            add_tasks: vec![deck_core::domain::task::TaskState {
+                id: held,
+                assignee: Some(cfg.team[0].agent_id),
+                status: TaskStatus::Assigned,
+                ..deck_core::domain::task::TaskState::new(held)
+            }],
+            add_edges: Vec::new(),
+        })
+        .unwrap();
+    run.roles.insert(held, "developer".into());
+    run.titles.insert(held, "Later work".into());
+
+    driver.step(&mut run, true).await;
+
+    assert!(
+        run.awaiting_approval.contains(&held),
+        "the mode change should hold the next dispatch, not wait for the next run"
+    );
+}

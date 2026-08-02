@@ -412,6 +412,17 @@ pub type SharedApprovals = Arc<parking_lot::Mutex<Vec<TaskId>>>;
 
 pub struct GrantedApprovals(pub SharedApprovals);
 
+/// The mode in force, which the operator may change while a run is going.
+pub type SharedAutonomy = Arc<parking_lot::Mutex<deck_supervisor::autonomy::Autonomy>>;
+
+pub struct LiveAutonomy(pub SharedAutonomy);
+
+impl deck_supervisor::autonomy::AutonomySource for LiveAutonomy {
+    fn current(&self) -> deck_supervisor::autonomy::Autonomy {
+        *self.0.lock()
+    }
+}
+
 /// Tasks the operator has added mid-run, waiting for the driver.
 pub type SharedAddedTasks = Arc<parking_lot::Mutex<Vec<deck_supervisor::guidance::RequestedTask>>>;
 

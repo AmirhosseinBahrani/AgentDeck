@@ -72,3 +72,23 @@ impl ApprovalQueue for NoApprovals {
         Vec::new()
     }
 }
+
+/// Where the driver reads the current mode from.
+///
+/// The mode used to be fixed in `RunConfig` at run start, which made the control in the UI
+/// inert for the entire life of a run — and a run is exactly when someone decides they would
+/// rather approve each agent, or stop being asked. Both read sites are consulted afresh at the
+/// moment they matter (dispatch, and a failure), so nothing about the loop required it to be
+/// constant; it simply had nowhere else to read from.
+pub trait AutonomySource: Send + Sync {
+    fn current(&self) -> Autonomy;
+}
+
+/// Holds whatever the run started with. Used by tests and by runs with no operator attached.
+pub struct FixedAutonomy(pub Autonomy);
+
+impl AutonomySource for FixedAutonomy {
+    fn current(&self) -> Autonomy {
+        self.0
+    }
+}

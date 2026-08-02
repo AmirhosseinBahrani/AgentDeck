@@ -442,6 +442,31 @@ function AddTask({
 
       <div className="flex min-h-0 grow gap-[26px] px-7 pt-[18px] pb-[26px]">
         <div className="flex min-w-0 grow flex-col gap-[22px] overflow-y-auto">
+          <section className="flex min-h-[180px] shrink-0 flex-col gap-3">
+            <div className="flex items-center justify-between gap-3">
+              <SectionRule
+                label="Task graph"
+                trailing={`${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
+                className="grow"
+              />
+              {running && (
+                <Button variant="ghost" size="sm" onClick={() => setAddingTask(true)}>
+                  <Plus /> Add task
+                </Button>
+              )}
+            </div>
+            {running && tasks.length === 0 ? (
+              <PlanningNotice startedAt={snapshot?.started_at_ms ?? 0} />
+            ) : (
+              <TaskGraph
+                tasks={tasks}
+                edges={snapshot?.edges ?? []}
+                starting={starting}
+                onOpenSession={(id) => onOpenSession(id)}
+              />
+            )}
+          </section>
+
           <ProjectSwitcher
             activePath={projectPath}
             onSwitched={() => {
@@ -483,30 +508,6 @@ function AddTask({
             </Button>
           </section>
 
-          <section className="flex min-h-[180px] shrink-0 flex-col gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <SectionRule
-                label="Task graph"
-                trailing={`${tasks.length} task${tasks.length === 1 ? "" : "s"}`}
-                className="grow"
-              />
-              {running && (
-                <Button variant="ghost" size="sm" onClick={() => setAddingTask(true)}>
-                  <Plus /> Add task
-                </Button>
-              )}
-            </div>
-            {running && tasks.length === 0 ? (
-              <PlanningNotice startedAt={snapshot?.started_at_ms ?? 0} />
-            ) : (
-              <TaskGraph
-                tasks={tasks}
-                edges={snapshot?.edges ?? []}
-                starting={starting}
-                onOpenSession={(id) => onOpenSession(id)}
-              />
-            )}
-          </section>
         </div>
 
         <aside className="flex w-[372px] shrink-0 flex-col gap-[22px] overflow-y-auto">

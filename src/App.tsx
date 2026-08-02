@@ -5,8 +5,9 @@ import { EscalationLayer } from "./features/permissions/EscalationLayer";
 import { RecoveryBanner } from "./features/recovery/RecoveryBanner";
 import { ProjectGate, useProjectPicker } from "./features/setup/ProjectGate";
 import { RuntimeGate } from "./features/setup/RuntimeGate";
-import { NavTabs, type NavTab } from "./features/shell/NavTabs";
-import { TitleBar } from "./features/shell/TitleBar";
+import type { NavTab } from "./lib/types";
+import { AppRail } from "./features/shell/AppRail";
+import { RunBar } from "./features/shell/RunBar";
 import { TeamView } from "./features/team/TeamView";
 import { DecisionsView } from "./features/views/DecisionsView";
 import { DiffsView } from "./features/views/DiffsView";
@@ -53,6 +54,7 @@ function Deck() {
   const [sessions, setSessions] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
   const [view, setView] = useState<NavTab>("team");
+  const [projectCount, setProjectCount] = useState(0);
   const stats = usePumpStats();
   const picker = useProjectPicker(setProject);
 
@@ -69,6 +71,10 @@ function Deck() {
     read();
     const id = setInterval(read, 2000);
     void invoke<ProjectInfo>("get_project").then(setProject).catch(() => {});
+    // Only for the rail's count. The switcher itself owns the list.
+    void invoke<unknown[]>("list_projects")
+      .then((rows) => setProjectCount(rows.length))
+      .catch(() => {});
     return () => clearInterval(id);
   }, []);
 
@@ -82,37 +88,31 @@ function Deck() {
   }
 
   return (
-    <div className="relative flex h-full flex-col text-deck-text">
+    // A row, not a column. The rail is the one element that survives every view change, so it
+    // sits outside the switch rather than being redrawn as part of each screen.
+    <div className="relative flex h-full flex-row text-deck-text">
       {picker.dialog}
 
-      <TitleBar
+      <AppRail
+        active={view}
+        onChange={setView}
         project={project?.name ?? "no project"}
         projectPath={project?.path ?? undefined}
         onChangeProject={() => void picker.pick()}
-        autonomy={snapshot?.autonomy || "assisted"}
-        running={!!snapshot?.active}
-        phase={snapshot?.phase ?? ""}
-        startedAt={snapshot?.started_at_ms ?? 0}
+        projectCount={projectCount}
+        snapshot={snapshot}
+        sessionCount={sessions.length}
       />
 
-      {/* Outside both views: an agent can block while the operator is looking elsewhere, and a
-          prompt buried in a hidden transcript would time out unseen. */}
-      <EscalationLayer />
+      <div className="flex min-w-0 grow flex-col">
+        <RunBar snapshot={snapshot} />
 
-      {/* Above the view switch, because what a crash left behind is true of the whole app. */}
-      <RecoveryBanner />
+        {/* Outside every view: an agent can block while the operator is looking elsewhere, and a
+            prompt buried in a hidden transcript would time out unseen. */}
+        <EscalationLayer />
 
-      <NavTabs
-        active={view}
-        onChange={setView}
-        trailing={
-          snapshot?.run_id ? (
-            <span className="font-mono text-[10.5px] text-deck-faint">
-              run {snapshot.run_id}
-            </span>
-          ) : undefined
-        }
-      />
+        {/* Above the view switch, because what a crash left behind is true of the whole app. */}
+        <RecoveryBanner />
 
       {view === "team" && (
         <div className="min-h-0 flex-1">
@@ -193,7 +193,7 @@ function Deck() {
         />
       )}
 
-      <footer className="flex h-6 shrink-0 items-center gap-4 border-t border-deck-line px-3 font-mono text-[10px] text-deck-faint">
+      <footer className="flex h-[30px] shrink-0 items-center gap-4 border-t border-deck-line bg-deck-surface px-4 font-mono text-[10px] text-deck-faint">
         <span>{snapshot?.engaged ?? 0} running</span>
         <span>{snapshot?.agents.length ?? 0} agents</span>
         <span>{snapshot?.tasks.length ?? 0} tasks</span>
@@ -207,6 +207,7 @@ function Deck() {
         </span>
         <span>${(snapshot?.spent_usd ?? 0).toFixed(2)} today</span>
       </footer>
+      </div>
     </div>
   );
 }

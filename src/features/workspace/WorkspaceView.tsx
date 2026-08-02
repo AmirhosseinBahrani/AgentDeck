@@ -29,11 +29,13 @@ export function WorkspaceView({
   active,
   onSelect,
   onClose,
+  onReorder,
 }: {
   sessions: string[];
   active: string | null;
   onSelect: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
+  onReorder: (next: string[]) => void;
 }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot | null>(null);
   const [history, setHistory] = useState<SessionHistoryEntry[]>([]);
@@ -123,6 +125,7 @@ export function WorkspaceView({
           nameFor={nameFor}
           onSelect={onSelect}
           onClose={onClose}
+          onReorder={onReorder}
         />
 
         {current && <SessionHeader agent={current} onKill={kill} />}
@@ -357,6 +360,14 @@ function NoSession({
   );
 }
 
+/**
+ * The open transcripts, in an order the operator controls.
+ *
+ * Tabs arrive in the order sessions happened to be opened, which is rarely the order anyone
+ * wants to read them in — the two agents you are comparing end up at opposite ends of the strip
+ * with unrelated ones between. Dragging is the cheapest fix: no menu, no settings, and the
+ * result is visible where the change was made.
+ */
 function SessionTabs({
   sessions,
   active,
@@ -364,6 +375,7 @@ function SessionTabs({
   nameFor,
   onSelect,
   onClose,
+  onReorder,
 }: {
   sessions: string[];
   active: string | null;
@@ -371,7 +383,24 @@ function SessionTabs({
   nameFor: (id: string) => string;
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
+  onReorder: (next: string[]) => void;
 }) {
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  function drop(target: string) {
+    if (!dragging || dragging === target) {
+      setDragging(null);
+      setOver(null);
+      return;
+    }
+    const next = sessions.filter((id) => id !== dragging);
+    next.splice(next.indexOf(target), 0, dragging);
+    onReorder(next);
+    setDragging(null);
+    setOver(null);
+  }
+
   return (
     <div className="glass-flat flex h-10 shrink-0 items-end gap-0.5 border-b border-deck-line px-2.5">
       {sessions.length === 0 && (
@@ -385,8 +414,33 @@ function SessionTabs({
         return (
           <div
             key={id}
+            draggable
+            onDragStart={(e) => {
+              setDragging(id);
+              e.dataTransfer.effectAllowed = "move";
+            }}
+            onDragEnd={() => {
+              setDragging(null);
+              setOver(null);
+            }}
+            // Without preventDefault the browser refuses the drop and the tab springs back.
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              if (id !== dragging) setOver(id);
+            }}
+            onDragLeave={() => setOver((cur) => (cur === id ? null : cur))}
+            onDrop={(e) => {
+              e.preventDefault();
+              drop(id);
+            }}
             className={cn(
-              "group flex h-[31px] items-center gap-2 rounded-t-lg px-3 transition-colors",
+              "group flex h-[31px] cursor-grab items-center gap-2 rounded-t-lg px-3 transition-colors active:cursor-grabbing",
+              // A line on the edge the tab would land against, rather than moving the other tabs
+              // out of the way. Reflowing the strip under the cursor makes the target you were
+              // aiming at the one thing that moves.
+              over === id && "shadow-[inset_2px_0_0_0_var(--deck-accent)]",
+              dragging === id && "opacity-40",
               // The focused tab is lifted to the page ground rather than tinted accent — a strip
               // of them would otherwise compete with the selected row in the sidebar.
               isActive
@@ -394,7 +448,11 @@ function SessionTabs({
                 : "hover:bg-deck-raised",
             )}
           >
-            <button onClick={() => onSelect(id)} className="flex items-center gap-2">
+            <button
+              draggable={false}
+              onClick={() => onSelect(id)}
+              className="flex items-center gap-2"
+            >
               <span
                 className={cn(
                   "size-1.5 shrink-0 rounded-full",

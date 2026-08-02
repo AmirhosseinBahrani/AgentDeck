@@ -69,6 +69,16 @@ export function WorkspaceView({
     return () => clearInterval(id);
   }, [refresh]);
 
+  /** Removes finished session records. The list is the only place their absence is felt. */
+  async function clearHistory() {
+    try {
+      setError(await invoke<string>("clear_session_history"));
+      setHistory(await invoke<SessionHistoryEntry[]>("list_session_history"));
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function answer(escalationId: string, choice: EscalationAnswer) {
     setAnswering(escalationId);
     try {
@@ -115,6 +125,7 @@ export function WorkspaceView({
           onSelect(id);
         }}
         onOpenTask={setOpenTask}
+        onClearHistory={clearHistory}
       />
 
       <main className="flex min-w-0 grow flex-col">

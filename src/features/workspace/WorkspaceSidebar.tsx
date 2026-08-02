@@ -1,3 +1,5 @@
+import { Trash2 } from "lucide-react";
+import { useState } from "react";
 import type { RunSnapshot, SessionHistoryEntry } from "../../lib/types";
 import { cn } from "../../lib/utils";
 
@@ -15,6 +17,7 @@ export function WorkspaceSidebar({
   activeTask,
   onOpenSession,
   onOpenTask,
+  onClearHistory,
 }: {
   snapshot: RunSnapshot | null;
   history: SessionHistoryEntry[];
@@ -22,7 +25,9 @@ export function WorkspaceSidebar({
   activeTask: string | null;
   onOpenSession: (sessionId: string) => void;
   onOpenTask: (taskId: string) => void;
+  onClearHistory: () => void;
 }) {
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const tasks = snapshot?.tasks ?? [];
   // Sessions belonging to the live run are already listed under Team with their current status.
   // Repeating them here would make the history read as though the run had happened twice.
@@ -134,6 +139,42 @@ export function WorkspaceSidebar({
       </Group>
 
       <Group label="History" trailing={past.length ? String(past.length) : undefined}>
+        {past.length > 0 &&
+          (confirmingClear ? (
+            // Confirmed, because a transcript is the only record of what an agent actually did
+            // and there is no undo. The sentence says what survives, since the fear is losing
+            // the work rather than the log.
+            <div className="mb-1 flex flex-col gap-1.5 rounded-md border border-deck-line bg-deck-surface px-2 py-2">
+              <span className="text-[11px] leading-relaxed text-deck-dim">
+                Remove {past.length} finished session{past.length === 1 ? "" : "s"} and their
+                transcripts? Worktrees and branches are kept.
+              </span>
+              <div className="flex gap-1.5">
+                <button
+                  onClick={() => {
+                    setConfirmingClear(false);
+                    onClearHistory();
+                  }}
+                  className="rounded px-2 py-1 text-[11px] font-medium text-deck-danger transition-colors hover:bg-deck-danger/10"
+                >
+                  Clear
+                </button>
+                <button
+                  onClick={() => setConfirmingClear(false)}
+                  className="rounded px-2 py-1 text-[11px] text-deck-faint transition-colors hover:text-deck-text"
+                >
+                  Keep
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmingClear(true)}
+              className="mb-1 flex h-6 items-center gap-1.5 self-start rounded px-2 text-[11px] text-deck-faint transition-colors hover:text-deck-text"
+            >
+              <Trash2 className="size-3" /> Clear finished
+            </button>
+          ))}
         {past.length === 0 ? (
           <p className="px-2 text-[11px] leading-relaxed text-deck-faint">
             Sessions from earlier runs are listed here once one has finished.

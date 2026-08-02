@@ -201,3 +201,64 @@ fn now_ms() -> i64 {
         .map(|d| d.as_millis() as i64)
         .unwrap_or_default()
 }
+
+/// What a purge removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Purged {
+    pub sessions: u64,
+    pub events: u64,
+}
+
+/// Deletes the records of sessions that have finished.
+///
+/// Records only. Worktrees, branches and the work inside them are untouched — a session row is
+/// the transcript and the metadata, not the deliverable, and conflating the two would make
+/// tidying up a list into a way to lose an agent's output.
+///
+/// Live sessions are excluded rather than filtered out afterwards: a run in progress is writing
+/// to these tables, and removing a row from under it would leave the app holding a session id
+/// that no longer resolves.
+///
+/// Events are deleted in the same transaction. `events.session_id` carries no foreign key, so
+/// dropping the sessions alone would leave their transcripts behind as rows nothing can reach —
+/// invisible, and the larger half of the storage.
+pub async fn purge_ended(store: &Store, project_id: &str) -> Result<Purged, StoreError> {
+    let mut tx = store.writer().begin().await?;
+
+    let ids: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM sessions
+         WHERE project_id = ?1 AND status IN ('stopped', 'crashed', 'failed', 'interrupted')",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    if ids.is_empty() {
+        tx.rollback().await?;
+        return Ok(Purged::default());
+    }
+
+    let mut events = 0;
+    for (id,) in &ids {
+        let deleted = sqlx::query("DELETE FROM events WHERE session_id = ?1")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        events += deleted.rows_affected();
+    }
+
+    let removed = sqlx::query(
+        "DELETE FROM sessions
+         WHERE project_id = ?1 AND status IN ('stopped', 'crashed', 'failed', 'interrupted')",
+    )
+    .bind(project_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    Ok(Purged {
+        sessions: removed.rows_affected(),
+        events,
+    })
+}
